@@ -651,7 +651,7 @@
 
 ---
 
-- [ ] **Task 3.5** — `internal/proxy`: reverse proxy and `truebearing serve`
+- [x] **Task 3.5** — `internal/proxy`: reverse proxy and `truebearing serve`
       **Scope:**
   - Implement `internal/proxy/proxy.go`:
     - `New(upstream *url.URL, store *store.Store) *Proxy`.
@@ -671,6 +671,32 @@
     starts without error and listens on the configured port.
   - A `tools/call` with a valid JWT and session ID is forwarded upstream.
   - A `tools/call` with no JWT returns 401.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/proxy/proxy.go` — NEW: `Proxy` struct, `New(upstream *url.URL, st *store.Store, pol *policy.Policy) *Proxy`,
+    `Handler() http.Handler` (chains AuthMiddleware → SessionMiddleware → handleMCP),
+    `Policy() *policy.Policy` accessor, unexported `handleMCP` (tool-call router with stub pipeline).
+  - `internal/proxy/proxy_test.go` — NEW: 5 tests: `TestProxy_HandlerServesRequests`,
+    `TestProxy_NonToolRequest_ForwardedUpstream`, `TestProxy_ToolCall_MissingJWT_Returns401`,
+    `TestProxy_ToolCall_MissingSessionID_Returns400`, `TestProxy_ToolCall_ValidAuth_ForwardedUpstream`.
+    Reuses `registerTestAgent` and `mintTestToken` helpers from `auth_test.go`.
+  - `cmd/serve.go` — replaced stub; loads policy with `policy.ParseFile`, opens store, creates proxy,
+    starts `http.ListenAndServe`. Added `serveResolveDBPath` helper. Fails fast on missing policy or DB.
+  **Notes:**
+  - `New()` accepts `*policy.Policy` in addition to `*url.URL` and `*store.Store`. The spec shows
+    `New(upstream, store)` but the policy is required for the health endpoint (Task 3.5a) and the
+    evaluation pipeline (Task 4.8). Accepting it here keeps the constructor testable without a filesystem.
+    A `// Design:` comment documents this decision.
+  - `handleMCP` reads and restores the body a second time (SessionMiddleware already did so once)
+    so that `httputil.ReverseProxy` can forward the full body bytes upstream. Both reads use
+    `io.NopCloser(bytes.NewReader(body))` so every downstream reader gets the complete payload.
+  - The evaluation stub is a single `// TODO(task-4.1):` comment followed by the forward call.
+    No stub type or dead code was added — CLAUDE.md §12 prohibits over-engineering.
+  - `--stdio` and `--capture-trace` flags are wired but return early with a clear "not yet implemented"
+    error/warning. They are not silently ignored.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    40/40 proxy tests pass; 5 new proxy tests pass.
 
 ---
 

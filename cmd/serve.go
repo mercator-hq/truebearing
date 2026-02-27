@@ -2,12 +2,20 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	inpolicy "github.com/mercator-hq/truebearing/internal/policy"
+	"github.com/mercator-hq/truebearing/internal/proxy"
+	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // newServeCommand returns the `truebearing serve` command.
-// The real implementation is added in Task 3.5.
 func newServeCommand() *cobra.Command {
 	var (
 		upstream     string
@@ -23,9 +31,57 @@ func newServeCommand() *cobra.Command {
 
 The proxy intercepts all MCP tool calls, evaluates them against the loaded
 policy, and forwards allowed calls to the upstream MCP server.`,
-		// TODO(1.6): remove stub and implement the real serve logic.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("[not yet implemented]: serve")
+			if upstream == "" {
+				return fmt.Errorf("--upstream flag is required")
+			}
+			if stdio {
+				return fmt.Errorf("--stdio mode is not yet implemented")
+			}
+			if captureTrace != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: --capture-trace is not yet implemented; flag ignored\n")
+			}
+
+			// Parse the upstream URL early so a malformed value is caught before
+			// any port is bound or database is opened.
+			upstreamURL, err := url.Parse(upstream)
+			if err != nil {
+				return fmt.Errorf("parsing --upstream %q: %w", upstream, err)
+			}
+
+			// Load and validate the policy file. Fail fast if it is absent or
+			// invalid so the operator sees a clear error before traffic starts.
+			policyPath := viper.GetString("policy")
+			pol, err := inpolicy.ParseFile(policyPath)
+			if err != nil {
+				return fmt.Errorf("loading policy from %s: %w", policyPath, err)
+			}
+
+			// Open the database. The default path is ~/.truebearing/truebearing.db
+			// unless --db was supplied.
+			dbPath := serveResolveDBPath()
+			st, err := store.Open(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database at %s: %w", dbPath, err)
+			}
+			defer func() {
+				if cerr := st.Close(); cerr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: closing database: %v\n", cerr)
+				}
+			}()
+
+			p := proxy.New(upstreamURL, st, pol)
+
+			addr := fmt.Sprintf(":%d", port)
+			fmt.Fprintf(cmd.OutOrStdout(), "TrueBearing proxy\n")
+			fmt.Fprintf(cmd.OutOrStdout(), "  listening on  %s\n", addr)
+			fmt.Fprintf(cmd.OutOrStdout(), "  upstream      %s\n", upstream)
+			fmt.Fprintf(cmd.OutOrStdout(), "  policy        %s  (%s)\n", policyPath, pol.ShortFingerprint())
+			fmt.Fprintf(cmd.OutOrStdout(), "  db            %s\n", dbPath)
+
+			if err := http.ListenAndServe(addr, p.Handler()); err != nil {
+				return fmt.Errorf("proxy server: %w", err)
+			}
 			return nil
 		},
 	}
@@ -36,4 +92,17 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 	cmd.Flags().BoolVar(&stdio, "stdio", false, "accept MCP requests on stdin/stdout instead of HTTP")
 
 	return cmd
+}
+
+// serveResolveDBPath returns the SQLite database path for the serve command.
+// It honours the --db flag (via viper) and falls back to ~/.truebearing/truebearing.db.
+func serveResolveDBPath() string {
+	if db := viper.GetString("db"); db != "" {
+		return db
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "truebearing.db"
+	}
+	return filepath.Join(home, ".truebearing", "truebearing.db")
 }
