@@ -371,7 +371,7 @@
 
 ---
 
-- [ ] **Task 2.3** — `cmd/policy`: wire up all four policy commands
+- [x] **Task 2.3** — `cmd/policy`: wire up all four policy commands
       **Scope:**
   - `policy validate <file>`: calls `ParseFile`, prints "OK" or errors, exits non-zero on error.
   - `policy lint <file>`: calls `ParseFile` then `Lint`, prints results with severity colours
@@ -386,6 +386,38 @@
   - `policy validate` exits non-zero on a broken YAML.
   - `policy lint` exits non-zero when any ERROR rule fires.
   - `policy explain` output matches the format in the plan exactly.
+
+  **Status:** Complete
+  **Files:**
+  - `cmd/policy/validate.go` — replaced stub; calls `policy.ParseFile`, prints "OK" or returns error
+  - `cmd/policy/lint.go` — replaced stub; ANSI-coloured output (red/yellow/cyan), returns error with
+    count summary on any ERROR, uses `cmd.OutOrStdout()` for testability
+  - `cmd/policy/explain.go` — replaced stub; structured template renderer matching mvp-plan §13
+    format exactly; sections (Sequence guards, Taint rules, Escalation rules) are omitted when empty;
+    `sortedKeys` ensures stable alphabetical tool ordering
+  - `cmd/policy/diff.go` — replaced stub; compares enforcement mode, may_use (added/removed),
+    budget, session limits, and per-tool predicates; prints "(no changes detected)" when identical
+  - `cmd/policy/policy_test.go` — NEW: 13 test functions covering `describeMode` (3 cases),
+    `describeBudget` (4 cases), `sameStringSet` (5 cases), `samePriorN` (6 cases),
+    `sameEscalateRule` (7 cases), `printLintResults` (colour + empty), `printExplain`
+    (minimal policy + all-sections policy), `printDiff` (no-change, mode change, added/removed
+    tools, budget change, predicate change)
+  **Notes:**
+  - All output functions take an `io.Writer` parameter (populated by `cmd.OutOrStdout()` in cobra
+    RunE) so they can be tested via `bytes.Buffer` without capturing os.Stdout.
+  - ANSI colour codes are raw escape sequences (`\033[31m` etc.) defined as package-level constants
+    — no external terminal library needed. Standard across POSIX terminals and modern Windows.
+  - `policy lint` returns `fmt.Errorf("%d error(s) found", errCount)` when errors exist. Because
+    the root command has `SilenceErrors: true`, cobra does not print this; `main()` prints it to
+    stderr, producing a clean summary line after the coloured diagnostics.
+  - `policy diff` uses `sameStringSet` for `only_after`/`never_after` because their evaluation
+    semantics are order-independent. A change in list order with identical elements is not a
+    policy change.
+  - `EscalateRule.Value` equality in `sameEscalateRule` uses `fmt.Sprintf("%v", ...)` — this is
+    display-only comparison in a CLI diff command, not enforcement logic.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    Tests verified smoke-tested: validate OK/error, lint error exit code, explain output,
+    diff no-change.
 
 ---
 
