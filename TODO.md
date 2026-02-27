@@ -535,7 +535,7 @@
 
 ---
 
-- [ ] **Task 3.2** — `internal/proxy/traceheaders.go`: trace ID extraction
+- [x] **Task 3.2** — `internal/proxy/traceheaders.go`: trace ID extraction
       **Scope:**
   - Implement `ExtractClientTraceID(headers http.Header) string` from `mvp-plan.md §9.1a`.
   - Priority order: `traceparent`, `x-datadog-trace-id`, `x-cloud-trace-context`,
@@ -546,6 +546,22 @@
   **Satisfaction check:**
   - `go test ./internal/proxy/...` passes.
   - Function is pure (no side effects, no logging).
+
+  **Status:** Complete
+  **Files:**
+  - `internal/proxy/traceheaders.go` — NEW: `tracingHeaders` slice (priority-ordered), `ExtractClientTraceID`
+  - `internal/proxy/traceheaders_test.go` — NEW: 12 table-driven subtests: one per header format,
+    priority-ordering cases (first wins), all-five-present, unrecognised header, empty-value header
+  **Notes:**
+  - `ExtractClientTraceID` is a pure package-level function with no side effects and no logging,
+    matching the plan's §9.1a signature exactly.
+  - Preserving the header name in the return value (`"<name>=<value>"`) disambiguates same numeric
+    values that different tracing systems may produce (e.g., Datadog integer vs. Zipkin hex).
+  - `http.Header.Get` canonicalises header names, so `x-datadog-trace-id` and
+    `X-Datadog-Trace-Id` are treated identically — no manual case-folding needed.
+  - Empty-value header (`traceparent: ""`) is treated as absent by `headers.Get` returning `""`;
+    this matches Go's `net/http` semantics and the test asserts the expected `""` return.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean. 12/12 tests pass.
 
 ---
 
