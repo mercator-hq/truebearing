@@ -611,7 +611,28 @@
 
 ---
 
-- [ ] **Task 3.4** — `internal/proxy`: session ID middleware
+- [x] **Task 3.4** — `internal/proxy`: session ID middleware
+  **Status:** Complete
+  **Files:**
+  - `internal/proxy/session.go` — NEW: `sessionIDKey` context constant, `SessionIDFromContext`,
+    `SessionMiddleware`, unexported helpers `isToolCall`, `writeMissingSessionID`, `writeBadRequest`
+  - `internal/proxy/session_test.go` — NEW: 9 test functions (8 middleware integration tests +
+    1 table-driven `TestIsToolCall` with 6 cases): tools/call missing header → 400,
+    tools/list missing header → forwarded, tools/call with header → session ID in context,
+    non-JSON body forwarded, empty body forwarded, body restored for downstream handler,
+    400 response format, non-tool method gets no context value, isToolCall helper cases
+  **Notes:**
+  - `sessionIDKey contextKey = 1` — explicit constant (not iota) to avoid collision with
+    `claimsKey = 0` defined in auth.go. A comment in session.go explains the numeric choice.
+  - Session ID is stored in context only when enforcement fires (i.e. on tool calls), not when
+    the header is merely present on a non-tool request. This means `SessionIDFromContext` returns
+    false for tools/list even if the header was sent — clean contract for downstream handlers.
+  - Body is fully read and restored using `io.NopCloser(bytes.NewReader(body))` so the downstream
+    reverse proxy and engine can read it again. A nil Body is handled gracefully (treated as empty).
+  - `isToolCall` returns false for any non-parseable body, routing it to the upstream without
+    session enforcement. The upstream MCP server handles any resulting protocol errors.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    35/35 proxy tests pass; full suite clean.
       **Scope:**
   - Implement `internal/proxy/session.go`:
     - Middleware that reads `X-TrueBearing-Session-ID` from the request headers.
