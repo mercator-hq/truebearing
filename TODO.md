@@ -325,7 +325,7 @@
 
 ---
 
-- [ ] **Task 2.2** — `internal/policy`: linter (L001–L013)
+- [x] **Task 2.2** — `internal/policy`: linter (L001–L013)
       **Scope:**
   - Implement `internal/policy/lint.go`:
     - `LintResult` struct: `Code string`, `Severity Severity` (Error/Warning/Info), `Message string`.
@@ -341,6 +341,33 @@
   - All 13 rules have tests. `go test ./internal/policy/...` passes.
   - A policy with a cycle returns exactly one `L013 ERROR`.
   - A clean policy with no issues returns an empty `[]LintResult`.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/policy/lint.go` — NEW: `Severity` type and constants (`SeverityError`, `SeverityWarning`,
+    `SeverityInfo`), `LintResult` struct, `Lint(p *Policy) []LintResult`, and 13 private rule functions
+    (`lintL001` through `lintL013`). L013 uses three-colour DFS cycle detection and reconstructs the
+    full cycle path in the error message.
+  - `internal/policy/lint_test.go` — NEW: 16 test functions, 35 total subtests. Table-driven tests
+    for every lint rule including both triggering and non-triggering cases. Extra tests:
+    `TestLint_L013_MessageFormat` (exact message structure), `TestLint_CleanPolicy` (zero results),
+    `TestLint_SeverityValues` (string constants), `TestLint_AllValidOperatorsPassL012` (8 operators).
+  - `internal/policy/types.go` — MODIFIED: added `EscalationConfig` struct and `Escalation
+    *EscalationConfig` field to `Policy`. Uses pointer + `json:",omitempty"` so policies that omit
+    the `escalation:` block produce identical fingerprints to pre-2.2 policies.
+  **Notes:**
+  - L013 uses three-colour DFS (white/gray/black), not Kahn's algorithm. DFS was chosen because it
+    naturally reconstructs the full cycle path without a separate pass — when a back edge is detected,
+    the current DFS stack IS the cycle. Kahn's algorithm detects cycles but does not reconstruct paths.
+  - L013 only graphs `only_after` relationships. `never_after` relationships are not dependency edges —
+    they represent mutual exclusion, not ordering, and cannot create deadlock cycles on their own.
+  - `EscalationConfig` added to `types.go` now rather than waiting for Task 5.5a because L008 requires
+    it to distinguish "no channel configured" from "webhook configured". The operational webhook-sending
+    logic stays in Task 5.5a. Using a pointer with `omitempty` preserves fingerprint stability.
+  - `buildMayUseSet` is unexported (package-level helper). L002, L003, L004 each call it independently
+    to keep each rule function self-contained and independently testable.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    35/35 lint tests pass; 11/11 pre-existing parser tests still pass.
 
 ---
 

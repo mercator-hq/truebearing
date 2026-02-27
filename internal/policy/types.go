@@ -26,6 +26,10 @@ type Policy struct {
 	Budget          BudgetPolicy          `yaml:"budget"           json:"budget"`
 	MayUse          []string              `yaml:"may_use"          json:"may_use"`
 	Tools           map[string]ToolPolicy `yaml:"tools"            json:"tools"`
+	// Escalation holds optional notification settings for escalation events.
+	// omitempty ensures policies that do not set this block produce identical
+	// fingerprints to policies authored before this field was added.
+	Escalation *EscalationConfig `yaml:"escalation" json:"escalation,omitempty"`
 
 	// Derived at parse time — excluded from JSON so the fingerprint hash does
 	// not include itself, and SourcePath is excluded because it is a local
@@ -117,6 +121,17 @@ type TaintPolicy struct {
 
 	// Clears removes the taint flag from the session when this tool is called.
 	Clears bool `yaml:"clears" json:"clears"`
+}
+
+// EscalationConfig holds notification settings for escalation events. It is
+// parsed from the top-level escalation: block in the policy YAML. The
+// operational sending logic lives in internal/escalation (Task 5.5a); this
+// type exists here so the linter (L008) can check whether a channel is
+// configured.
+type EscalationConfig struct {
+	// WebhookURL is the HTTP endpoint to POST escalation notifications to.
+	// If empty, escalation events are written to stdout only.
+	WebhookURL string `yaml:"webhook_url" json:"webhook_url"`
 }
 
 // EscalateRule triggers a human escalation when a tool is called with
