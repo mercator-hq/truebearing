@@ -179,7 +179,7 @@
 
 ---
 
-- [ ] **Task 1.5** — `internal/identity`: JWT minting and validation
+- [x] **Task 1.5** — `internal/identity`: JWT minting and validation
       **Scope:**
   - Implement `internal/identity/jwt.go`:
     - `AgentClaims` struct from `mvp-plan.md §1.3`.
@@ -196,6 +196,25 @@
   **Satisfaction check:**
   - `go test ./internal/identity/...` passes with all cases above.
   - No code in `internal/identity` touches the database.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/identity/jwt.go` — `AgentClaims`, `MintAgentJWT`, `ValidateAgentJWT`, `ErrMissingAgentClaim`
+  - `internal/identity/jwt_test.go` — 6 tests: round-trip (all fields), expired rejection, tampered
+    signature rejection, wrong-key rejection, missing-agent-claim rejection, expiry-duration correctness
+  - `go.mod` / `go.sum` — `github.com/golang-jwt/jwt/v5 v5.3.1` added (approved dependency from CLAUDE.md)
+  **Notes:**
+  - Signing method is locked to `jwt.SigningMethodEdDSA` inside the key function passed to
+    `jwt.ParseWithClaims`. Any token presenting a different `alg` header is rejected before the
+    key function returns, preventing algorithm-confusion attacks (e.g., `alg: none`, HMAC variants).
+  - `jwt.WithExpirationRequired()` is passed to the parser so tokens that omit `exp` are rejected
+    rather than treated as non-expiring — fail-closed per CLAUDE.md §8.
+  - JWT `NumericDate` is second-precision (RFC 7519 §2). The expiry test truncates comparison bounds
+    to the second to avoid sub-millisecond timing races.
+  - `ErrMissingAgentClaim` is a package-level sentinel error so callers (the proxy auth middleware
+    in Task 3.3) can type-check the denial reason without string matching.
+  - No database access anywhere in `internal/identity` — key lookup stays in the caller (proxy).
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 
