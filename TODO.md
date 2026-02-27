@@ -144,7 +144,7 @@
 
 ---
 
-- [ ] **Task 1.4** — `internal/identity`: Ed25519 keypair generation and storage
+- [x] **Task 1.4** — `internal/identity`: Ed25519 keypair generation and storage
       **Scope:**
   - Implement `internal/identity/keypair.go`:
     - `GenerateKeypair(name string, dir string) (PublicKey, PrivateKey, error)`.
@@ -158,6 +158,24 @@
   - `go test ./internal/identity/...` passes.
   - Key files written at correct paths with correct permissions.
   - No JWT code yet — keys only.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/identity/keypair.go` — `GenerateKeypair`, `LoadPrivateKey`, `LoadPublicKey`,
+    plus unexported `writePrivateKey` and `writePublicKey` helpers
+  - `internal/identity/keypair_test.go` — 6 tests: round-trip, sign/verify, file permissions
+    (both .pem and .pub.pem), not-found errors for both loaders, keys directory creation
+  **Notes:**
+  - Private key is encoded as PKCS8 PEM (type `"PRIVATE KEY"`); public key as PKIX PEM
+    (type `"PUBLIC KEY"`). These match the formats used by `crypto/x509` stdlib functions
+    `MarshalPKCS8PrivateKey` / `ParsePKCS8PrivateKey` and `MarshalPKIXPublicKey` /
+    `ParsePKIXPublicKey`.
+  - Both key files are written with `0600` permissions per the security invariant in CLAUDE.md §8.
+    The `keys/` directory itself is created with `0700`.
+  - Public key files use `0600` (not `0644`) by design: agent names in filenames are operational
+    information that should not be readable by other local users.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+  - No JWT code in this task — keys only. JWT minting/validation is Task 1.5.
 
 ---
 
