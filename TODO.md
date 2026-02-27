@@ -870,7 +870,7 @@
 
 ---
 
-- [ ] **Task 4.3** — `internal/engine`: MayUse evaluator
+- [x] **Task 4.3** — `internal/engine`: MayUse evaluator
       **Scope:**
   - Implement `internal/engine/mayuse.go`:
     - `MayUseEvaluator` that checks `call.ToolName` against `policy.MayUse`.
@@ -884,6 +884,28 @@
   - `go test ./internal/engine/...` passes. Benchmark runs.
   - `check_escalation_status` is always allowed.
   - No domain-specific tool names in the evaluator code.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/engine/mayuse.go` — NEW: `MayUseEvaluator` struct, `Evaluate` method, `virtualEscalationTool` constant
+  - `internal/engine/mayuse_test.go` — NEW: `TestMayUseEvaluator` (7 table-driven cases),
+    `TestMayUseEvaluator_ShadowMode` (pipeline-level shadow conversion verification),
+    `BenchmarkMayUseEvaluator` (50-tool list, worst-case last-entry hit)
+  **Notes:**
+  - `virtualEscalationTool = "check_escalation_status"` is an unexported constant in `mayuse.go`
+    scoped to the engine package. It guards the unconditional allow path. No domain logic.
+  - Linear scan over `pol.MayUse` is intentional — typical lists are ≤ 50 entries and the slice is
+    already parsed. A `// Design:` comment notes the tradeoff and the path to a map-based approach
+    if profiling ever warrants it.
+  - Benchmark result: 115 ns/op, 0 allocs — well under the 2ms p99 target. The worst-case 50-tool
+    scan completes in ~115 nanoseconds on Apple M1.
+  - `TestMayUseEvaluator_ShadowMode` routes through `engine.New(&engine.MayUseEvaluator{})` with a
+    shadow policy to verify the evaluator always returns plain `Deny` and the pipeline converts it to
+    `ShadowDeny`. This confirms evaluator/pipeline separation per CLAUDE.md §6 invariant 5.
+  - All deny reasons embed the tool name (verified in the test loop) so operators can identify the
+    blocked tool from the audit record without reading source.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean. 21/21
+    engine tests pass; full suite passes.
 
 ---
 
