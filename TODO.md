@@ -768,7 +768,7 @@
 
 ---
 
-- [ ] **Task 4.1** — `internal/engine`: pipeline skeleton, types, invariants
+- [x] **Task 4.1** — `internal/engine`: pipeline skeleton, types, invariants
       **Scope:**
   - Implement `internal/engine/types.go`: `Decision`, `Action`, `ToolCall` from `mvp-plan.md §8.1`.
   - Implement `internal/engine/evaluator.go`: `Evaluator` interface.
@@ -786,6 +786,35 @@
   - `go test ./internal/engine/...` passes.
   - All five invariants from CLAUDE.md are documented in `doc.go`.
   - The pipeline can be constructed and called with zero evaluators (returns Allow).
+
+  **Status:** Complete
+  **Files:**
+  - `internal/session/session.go` — NEW: `Session` struct with `ID`, `AgentName`,
+    `PolicyFingerprint`, `Tainted`, `ToolCallCount`, `EstimatedCostUSD`, `Terminated`
+  - `internal/engine/types.go` — NEW: `Action` type and four constants (`Allow`, `Deny`,
+    `Escalate`, `ShadowDeny`); `Decision` struct (`Action`, `Reason`, `RuleID`);
+    `ToolCall` struct (`SessionID`, `AgentName`, `ToolName`, `Arguments`, `RequestedAt`)
+  - `internal/engine/evaluator.go` — NEW: `Evaluator` interface with
+    `Evaluate(ctx, call, sess, pol) (Decision, error)`
+  - `internal/engine/pipeline.go` — NEW: `Pipeline` struct, `New(stages ...Evaluator)`,
+    `Evaluate` enforcing all five invariants, `effectiveMode` helper
+  - `internal/engine/pipeline_test.go` — NEW: 16 tests across 4 test functions:
+    `TestPipeline_Evaluate` (12 table-driven cases), `TestPipeline_FirstFailureStopsExecution`,
+    `TestPipeline_ErrorReasonContainsOriginalError`, `TestPipeline_ShadowDenyPreservesRuleID`
+  **Notes:**
+  - `ToolCall.ArgumentsMap map[string]interface{}` from `mvp-plan.md §8.1` was omitted.
+    CLAUDE.md §12 prohibits `interface{}` in the evaluation pipeline. A `// Design:` comment
+    in `types.go` explains the decision. Evaluators will use gjson on `Arguments json.RawMessage`
+    directly (as Task 4.7 already specifies for the escalation evaluator).
+  - `internal/session/session.go` was created as part of this task because the `Evaluator`
+    interface requires `*session.Session`. The session package's `doc.go` was already correct
+    (left unchanged). Persistence methods stay in `internal/store/` (Task 4.2).
+  - Evaluator errors produce `RuleID: "internal_error"` so audit queries can filter on this
+    sentinel to detect pipeline faults distinct from policy-rule denials.
+  - Shadow conversion applies to both `Deny` and `Escalate` — in shadow mode all violations
+    are observed-only. This matches the design in `mvp-plan.md §8.7`.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    16/16 engine tests pass; all 44 pre-existing proxy tests still pass.
 
 ---
 
