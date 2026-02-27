@@ -818,7 +818,35 @@
 
 ---
 
-- [ ] **Task 4.2** — `internal/store`: session CRUD methods
+- [x] **Task 4.2** — `internal/store`: session CRUD methods
+  **Status:** Complete
+  **Files:**
+  - `internal/store/sessions.go` — NEW: `CreateSession`, `GetSession`, `UpdateSessionTaint`,
+    `IncrementSessionCounters`, `TerminateSession`; all return wrapped `sql.ErrNoRows` for
+    missing sessions; `IncrementSessionCounters` uses a single atomic UPDATE expression
+  - `internal/store/events.go` — NEW: `SessionEvent` struct, `AppendEvent` (tx-based seq
+    assignment, updates `event.Seq`), `GetSessionEvents` (ORDER BY seq ASC), `CountSessionEvents`;
+    unexported `nullableString` helper converts empty strings to nil for nullable TEXT columns
+  - `internal/store/sessions_test.go` — NEW: 11 test functions covering create, get (found/not-found),
+    taint toggle, taint not-found, counter increment (with cost, zero cost, not-found), and termination
+  - `internal/store/events_test.go` — NEW: 12 test functions covering seq starts at 1, monotonic seq
+    (5 events = seqs 1–5), seq verified via GetSessionEvents, RecordedAt auto-set when zero, explicit
+    RecordedAt preserved, nullable field round-trip, full field round-trip, empty events, ordering by seq,
+    session isolation (independent seq per session), CountSessionEvents tracking, and max_history detectable
+  **Notes:**
+  - `GetSession` returns `*session.Session` (from `internal/session`). Store imports session; no import cycle
+    because session imports nothing from store.
+  - `UpdateSessionTaint`, `IncrementSessionCounters`, and `TerminateSession` all check `RowsAffected == 0`
+    and return a wrapped `sql.ErrNoRows`, making not-found detectable via `errors.Is(err, sql.ErrNoRows)`.
+  - `AppendEvent` uses an explicit transaction (BEGIN → SELECT COALESCE(MAX(seq),0)+1 → INSERT → COMMIT) to
+    assign seq atomically. This is the correct pattern given `SetMaxOpenConns(1)`; no external race is possible.
+  - `nullableString` returns `*string` (nil for empty) rather than `interface{}`, avoiding the `interface{}`
+    prohibition while still storing NULL in nullable TEXT columns via database/sql's nil-pointer handling.
+  - `GetSessionEvents` initialises the slice as `[]SessionEvent{}` (not nil) so callers always get a
+    non-nil slice, even for sessions with no events. This avoids nil-vs-empty confusion in the sequence evaluator.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    37 store tests pass (7 pre-existing schema + 5 pre-existing agent + 3 agent_tools + 11 session + 12 event).
+
       **Scope:**
   - Implement in `internal/store/sessions.go`:
     - `CreateSession(id, agentName, policyFingerprint string) error`.
