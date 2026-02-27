@@ -274,7 +274,7 @@
 
 ---
 
-- [ ] **Task 2.1** — `internal/policy`: types, YAML parser, fingerprinter
+- [x] **Task 2.1** — `internal/policy`: types, YAML parser, fingerprinter
       **Scope:**
   - Implement `internal/policy/types.go` with all structs from `mvp-plan.md §6.2`.
   - Implement `internal/policy/parser.go`:
@@ -291,6 +291,37 @@
   - `go test ./internal/policy/...` passes.
   - `ParseFile` of a malformed YAML returns an error, never panics.
   - Fingerprint of identical content (different whitespace) is identical.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/policy/types.go` — NEW: `Policy`, `EnforcementMode`, `SessionPolicy`, `BudgetPolicy`,
+    `ToolPolicy`, `SequencePolicy`, `PriorNRule`, `TaintPolicy`, `EscalateRule` with both yaml and
+    json struct tags. `Fingerprint` and `SourcePath` carry `json:"-"` to exclude them from hashing.
+    `ShortFingerprint()` method returns the first 8 hex chars for display.
+  - `internal/policy/fingerprint.go` — NEW: `Fingerprint(p *Policy) (string, error)` — computes
+    SHA-256 over canonical JSON (`encoding/json.Marshal` sorts map keys alphabetically, encodes
+    struct fields in definition order), stores full 64-char hex in `p.Fingerprint`.
+  - `internal/policy/parser.go` — NEW: `ParseFile`, `ParseBytes`, unexported `validate` (checks
+    version and agent are non-empty), unexported `normalize` (nil slices/maps → empty equivalents
+    for fingerprint stability).
+  - `internal/policy/parser_test.go` — NEW: 11 tests covering full DSL example field verification,
+    minimal policy, malformed YAML, missing version, missing agent, file-not-found, disk reads,
+    fingerprint whitespace stability, fingerprint content sensitivity, source-path exclusion from
+    fingerprint, and nil-slice normalization.
+  **Notes:**
+  - `EscalateRule.Value` is `interface{}` per the plan's §6.2 type definition. This is the only
+    use of `interface{}` in the policy layer; CLAUDE.md §12 prohibits it in `internal/engine/` (the
+    evaluation pipeline), not in the policy parsing layer.
+  - The `normalize` function ensures that `may_use: []` and an omitted `may_use` field produce
+    identical fingerprints (both normalize to `[]string{}`). Same for `tools: {}` vs omitted.
+    This is tested in `TestNormalize_NilSlicesBeforeFingerprint`.
+  - Fingerprint uses `encoding/json.Marshal` directly on `*Policy`. The `json:"-"` tags on
+    `Fingerprint` and `SourcePath` exclude them. No separate fingerprintable struct is needed.
+  - Short fingerprint is 8 hex chars (matching plan examples like `a8f9c2` + 2 more chars). The
+    plan body says "16-char prefix" but all examples show 6–8 chars; 8 was chosen to match the
+    TODO example `"a8f9c244"`.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    11/11 policy tests pass.
 
 ---
 
