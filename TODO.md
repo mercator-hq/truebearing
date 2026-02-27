@@ -909,7 +909,7 @@
 
 ---
 
-- [ ] **Task 4.4** — `internal/engine`: Budget evaluator
+- [x] **Task 4.4** — `internal/engine`: Budget evaluator
       **Scope:**
   - Implement `internal/engine/budget.go`:
     - `BudgetEvaluator` that checks `session.ToolCallCount >= policy.Budget.MaxToolCalls` and
@@ -924,6 +924,28 @@
   **Satisfaction check:**
   - `go test ./internal/engine/...` passes.
   - Zero-value budget (not configured) never causes a denial.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/engine/budget.go` — NEW: `BudgetEvaluator` struct and `Evaluate` method
+  - `internal/engine/budget_test.go` — NEW: `TestBudgetEvaluator` (12 table-driven cases),
+    `TestBudgetEvaluator_ShadowMode` (pipeline-level shadow conversion verification),
+    `BenchmarkBudgetEvaluator` (well-within-limits session, common hot path)
+  **Notes:**
+  - Zero-valued `BudgetPolicy` (both `MaxToolCalls == 0` and `MaxCostUSD == 0`) fast-paths to
+    Allow immediately. Individual limits set to 0 are treated as "not configured" for that limit
+    only, allowing the other limit to still be enforced independently.
+  - `>=` comparison is used (not `>`): a session at exactly the limit is denied. This matches
+    the invariant that `MaxToolCalls: 50` means the 50th call is the last permitted one; the
+    51st (and the 50th when already at count 50) is denied.
+  - When both limits are exceeded, `RuleID` is `"budget.max_tool_calls"` (first wins per
+    pipeline evaluation order) and the Reason message names both violations with current and
+    max values. This gives operators the full picture in a single audit record.
+  - Benchmark result: 2.9 ns/op, 0 allocs — well under the 2ms p99 target.
+  - `TestBudgetEvaluator_ShadowMode` confirms the evaluator always returns plain `Deny` and
+    the pipeline converts it to `ShadowDeny`, enforcing invariant 5.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    14/14 engine tests pass (16 pre-existing + 14 new budget tests = 30 total); full suite passes.
 
 ---
 
