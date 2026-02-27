@@ -1,0 +1,59 @@
+# Pattern: Multi-approval gate — N independent review passes required before an
+# irreversible regulatory filing action is permitted.
+#
+# Risk mitigated: A regulatory submission agent that files a document with a
+# regulatory body before all required reviewers have independently cleared it
+# could trigger enforcement action, fines, or product withdrawal. This policy
+# requires the full review chain AND at least two independent quality assurance
+# passes before the filing tool may be called.
+#
+# This fixture demonstrates:
+#   - only_after with a 4-step prerequisite chain (full review pipeline)
+#   - requires_prior_n with count: 2 — the qa_review tool must be called at
+#     least twice (two independent QA reviewers sign off, not one)
+#   - enforcement_mode: block — regulatory filings are irreversible
+#   - No taint: the risk here is procedural omission, not data contamination
+
+version: "1"
+agent: regulatory-agent
+enforcement_mode: block
+
+session:
+  max_history: 500
+  max_duration_seconds: 86400  # 24-hour window for a full review cycle
+
+budget:
+  max_tool_calls: 100
+  max_cost_usd: 5.00
+
+may_use:
+  - draft_document
+  - medical_review
+  - legal_review
+  - qa_review
+  - submit_regulatory_filing
+  - check_escalation_status
+
+tools:
+  submit_regulatory_filing:
+    sequence:
+      # Every review discipline must have been completed before the filing is
+      # permitted. Omitting any one review step means the filing is blocked.
+      only_after:
+        - draft_document
+        - medical_review
+        - legal_review
+        - qa_review
+
+      # Two separate QA reviewers must have each called qa_review independently.
+      # A single QA pass is insufficient for high-stakes regulatory submissions.
+      # This is the EU AI Act Article 9 pattern: multiple independent verifications
+      # before an irreversible agentic action.
+      requires_prior_n:
+        tool: qa_review
+        count: 2
+
+  draft_document: {}
+  medical_review: {}
+  legal_review: {}
+  qa_review: {}

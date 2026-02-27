@@ -1,0 +1,64 @@
+# Pattern: Privileged document taint — block all outbound transmission tools until
+# an explicit privilege review clears the taint.
+#
+# Risk mitigated: A legal operations agent that reads a document covered by
+# attorney-client privilege and then sends or emails it externally without a privilege
+# review could cause irreparable legal and reputational harm. This policy taints the
+# session immediately upon reading any privileged document and blocks every outbound
+# transmission tool until a privilege review explicitly clears the taint.
+#
+# This fixture demonstrates:
+#   - taint.applies on a privileged-read tool
+#   - taint.clears on an explicit review gate
+#   - never_after applied to multiple outbound tools (not just one)
+#   - enforcement_mode: block — legal privilege loss is irreversible, no shadow mode
+
+version: "1"
+agent: legal-agent
+enforcement_mode: block
+
+session:
+  max_history: 500
+  max_duration_seconds: 7200
+
+budget:
+  max_tool_calls: 100
+  max_cost_usd: 1.00
+
+may_use:
+  - read_document
+  - read_privileged_document
+  - run_privilege_review
+  - send_document_external
+  - send_email
+  - check_escalation_status
+
+tools:
+  read_privileged_document:
+    taint:
+      # Reading any document marked as attorney-client privileged immediately taints
+      # the session. All outbound tools are blocked until privilege review confirms
+      # that no privileged content will be included in the transmission.
+      applies: true
+      label: privileged_document_accessed
+
+  run_privilege_review:
+    taint:
+      # A privilege review by a qualified reviewer confirms the outbound content
+      # contains no privileged material and clears the taint.
+      clears: true
+
+  send_document_external:
+    sequence:
+      # If a privileged document was read this session, block external document
+      # transmission until privilege review clears the session taint.
+      never_after:
+        - read_privileged_document
+
+  send_email:
+    sequence:
+      # Same guard for email: privileged content must not leave via email either.
+      never_after:
+        - read_privileged_document
+
+  read_document: {}

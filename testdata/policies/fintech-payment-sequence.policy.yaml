@@ -1,0 +1,86 @@
+# Pattern: Sequential approval guard for financial payment workflows
+#
+# Risk mitigated: A payment agent that executes a wire transfer without completing
+# the mandatory verification and approval steps could cause irreversible financial loss.
+# This policy enforces the sequence: read_invoice → verify_invoice → manager_approval
+# → execute_wire_transfer, and additionally blocks wire transfers if untrusted external
+# email was ingested into the session (prompt-injection / taint risk).
+#
+# Escalation: High-value transfers above $10,000 are escalated to a human operator
+# regardless of whether the sequence is satisfied.
+#
+# This is the canonical DSL showcase fixture. It demonstrates:
+#   - Tool-level enforcement_mode override (block on a single high-risk tool)
+#   - only_after sequence guard (multi-step prerequisite chain)
+#   - never_after taint guard (block if untrusted source was read)
+#   - taint.applies / taint.clears lifecycle
+#   - escalate_when with numeric threshold
+#   - requires_prior_n (at least one invoice must be verified)
+
+version: "1"
+agent: payments-agent
+enforcement_mode: shadow  # start here; flip to block after shadow-mode review
+
+session:
+  max_history: 500
+  max_duration_seconds: 7200
+
+budget:
+  max_tool_calls: 50
+  max_cost_usd: 5.00
+
+may_use:
+  - read_invoice
+  - verify_invoice
+  - manager_approval
+  - execute_wire_transfer
+  - read_external_email
+  - run_compliance_scan
+  - check_escalation_status
+
+tools:
+  execute_wire_transfer:
+    # Tool-level block overrides the global shadow mode: any violation on this tool
+    # is always enforced, never merely observed. This is the right setting for any
+    # tool that executes an irreversible real-world action.
+    enforcement_mode: block
+
+    sequence:
+      # Both prerequisites must have fired in this session before the transfer runs.
+      only_after:
+        - verify_invoice
+        - manager_approval
+
+      # If untrusted external email was read, the session may have been poisoned by
+      # a prompt-injection attack. Block the transfer until compliance scan clears it.
+      never_after:
+        - read_external_email
+
+      # At least one invoice must have been verified; protects against a batch of
+      # transfers where verify_invoice was called for a different invoice set.
+      requires_prior_n:
+        tool: verify_invoice
+        count: 1
+
+    escalate_when:
+      argument_path: "$.amount_usd"
+      operator: ">"
+      value: 10000
+
+  read_external_email:
+    taint:
+      # Reading untrusted external content taints the session. Any tool with
+      # never_after: [read_external_email] will be blocked until taint is cleared.
+      applies: true
+      label: external_email_read
+
+  run_compliance_scan:
+    taint:
+      # Calling this tool verifies the session content and clears the taint applied
+      # by read_external_email, allowing execute_wire_transfer to proceed again.
+      clears: true
+
+  # Tools with no sub-keys are allowed with no restrictions beyond may_use and budget.
+  read_invoice: {}
+  verify_invoice: {}
+  manager_approval: {}

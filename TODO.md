@@ -421,7 +421,7 @@
 
 ---
 
-- [ ] **Task 2.4** — `testdata/`: policy fixtures covering the full DSL feature surface
+- [x] **Task 2.4** — `testdata/`: policy fixtures covering the full DSL feature surface
       **Scope:**
   - Create `testdata/policies/` with one `.policy.yaml` per domain pattern. Files are named
     after the enforcement pattern they demonstrate, not after any specific company or customer:
@@ -448,6 +448,38 @@
   **Satisfaction check:**
   - `truebearing policy lint testdata/policies/*.policy.yaml` — zero ERRORs across all files.
   - No company name appears in any filename or file content.
+
+  **Status:** Complete
+  **Files:**
+  - `testdata/policies/fintech-payment-sequence.policy.yaml` — NEW: payments-agent; shadow+block
+    tool-level override; only_after [verify_invoice, manager_approval]; never_after taint guard;
+    requires_prior_n count:1; escalate_when amount_usd > 10000; taint apply/clear lifecycle.
+  - `testdata/policies/healthcare-phi-taint.policy.yaml` — NEW: billing-agent; block mode;
+    phi_accessed taint from read_phi; taint cleared by run_compliance_scan; submit_claim guarded
+    by only_after [verify_eligibility, read_patient_record] + never_after [read_phi];
+    escalate_when claim_amount_usd > 5000.
+  - `testdata/policies/insurance-claims-sequence.policy.yaml` — NEW: claims-agent; block mode;
+    only_after 3-step chain [ingest_claim, fraud_check, adjudicate_claim];
+    requires_prior_n {tool: run_quality_check, count: 2}; escalate_when payout_usd > 25000.
+  - `testdata/policies/legal-exfiltration-guard.policy.yaml` — NEW: legal-agent; block mode;
+    privileged_document_accessed taint from read_privileged_document; taint cleared by
+    run_privilege_review; never_after [read_privileged_document] on both send_document_external
+    and send_email. Zero WARNINGs — no escalation, no shadow mode.
+  - `testdata/policies/regulatory-multi-approval.policy.yaml` — NEW: regulatory-agent; block mode;
+    only_after 4-step chain [draft_document, medical_review, legal_review, qa_review];
+    requires_prior_n {tool: qa_review, count: 2}. EU AI Act Article 9 pattern. Zero WARNINGs.
+  **Notes:**
+  - All five files exit 0 from `policy validate` and `policy lint`.
+  - Expected WARNINGs (not ERRORs): L008 on three files (escalation webhook not configured —
+    test fixtures do not include production webhook URLs) and L009 on fintech (shadow mode).
+  - Agent names use CLAUDE.md §11 approved pattern (payments-agent, billing-agent, etc.).
+  - These fixtures are the canonical examples referenced by Task 4.8 integration tests:
+    TestPaymentSequenceGuard → fintech-payment-sequence.policy.yaml
+    TestPHITaintPropagation → healthcare-phi-taint.policy.yaml
+    TestClaimsSequentialGuard → insurance-claims-sequence.policy.yaml
+    TestPrivilegedDocumentExfiltrationGuard → legal-exfiltration-guard.policy.yaml
+    TestMultiApprovalRegulatory → regulatory-multi-approval.policy.yaml
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 

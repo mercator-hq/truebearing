@@ -1,0 +1,72 @@
+# Pattern: PHI (protected health information) taint — block outbound actions until
+# compliance clearance is obtained.
+#
+# Risk mitigated: A billing agent that reads a patient's protected health record and
+# then submits a claim to an external payer before running a compliance scan could
+# inadvertently transmit more PHI than required (minimum-necessary rule under HIPAA).
+# This policy taints the session the moment PHI is accessed and blocks all outbound
+# submission actions until a compliance scan explicitly clears the taint.
+#
+# This fixture demonstrates:
+#   - taint.applies on a sensitive-data read tool
+#   - taint.clears on a compliance gate tool
+#   - never_after on submission tool to enforce the taint-before-clear block
+#   - only_after prerequisite chain (eligibility and record must be read first)
+#   - escalate_when for high-value claims requiring human sign-off
+
+version: "1"
+agent: billing-agent
+enforcement_mode: block
+
+session:
+  max_history: 500
+  max_duration_seconds: 3600
+
+budget:
+  max_tool_calls: 100
+  max_cost_usd: 2.00
+
+may_use:
+  - read_patient_record
+  - verify_eligibility
+  - read_phi
+  - run_compliance_scan
+  - submit_claim
+  - check_escalation_status
+
+tools:
+  submit_claim:
+    sequence:
+      # Eligibility must be verified and the patient record must be read before
+      # a claim can be submitted.
+      only_after:
+        - verify_eligibility
+        - read_patient_record
+
+      # If PHI was accessed this session, block submission until the compliance
+      # scan (taint.clears) has run. The taint evaluator will enforce this block
+      # while session.Tainted == true; once run_compliance_scan clears the taint,
+      # this tool becomes callable again.
+      never_after:
+        - read_phi
+
+    escalate_when:
+      argument_path: "$.claim_amount_usd"
+      operator: ">"
+      value: 5000
+
+  read_phi:
+    taint:
+      # Accessing protected health information taints the session immediately.
+      # Any tool with never_after: [read_phi] is blocked until taint is cleared.
+      applies: true
+      label: phi_accessed
+
+  run_compliance_scan:
+    taint:
+      # Successful compliance scan confirms minimum-necessary disclosure and clears
+      # the phi_accessed taint, allowing submit_claim to proceed.
+      clears: true
+
+  read_patient_record: {}
+  verify_eligibility: {}

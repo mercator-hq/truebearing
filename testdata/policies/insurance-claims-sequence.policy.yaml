@@ -1,0 +1,61 @@
+# Pattern: Multi-step sequential guard with requires_prior_n for insurance claim
+# adjudication workflows.
+#
+# Risk mitigated: Approving an insurance claim payout without completing the full
+# adjudication pipeline (ingestion → fraud check → adjudication → quality review)
+# exposes the insurer to fraudulent or incorrect payouts. High-value payouts require
+# human sign-off regardless of pipeline completion.
+#
+# This fixture demonstrates:
+#   - only_after with a 3-step prerequisite chain
+#   - requires_prior_n: quality review must be run at least twice before approval
+#     (two independent QA passes catch errors that a single pass misses)
+#   - escalate_when for large-payout claims
+#   - enforcement_mode: block for production claims processing
+
+version: "1"
+agent: claims-agent
+enforcement_mode: block
+
+session:
+  max_history: 1000
+  max_duration_seconds: 7200
+
+budget:
+  max_tool_calls: 200
+  max_cost_usd: 2.00
+
+may_use:
+  - ingest_claim
+  - fraud_check
+  - adjudicate_claim
+  - run_quality_check
+  - approve_claim
+  - check_escalation_status
+
+tools:
+  approve_claim:
+    sequence:
+      # The full pipeline must have executed before approval is possible.
+      # Attempting to approve without fraud_check or adjudication is denied.
+      only_after:
+        - ingest_claim
+        - fraud_check
+        - adjudicate_claim
+
+      # Two independent quality reviews are required. A single QA pass is
+      # insufficient — the second pass catches systematic errors missed in the
+      # first (e.g., a misread coverage code that one reviewer normalises away).
+      requires_prior_n:
+        tool: run_quality_check
+        count: 2
+
+    escalate_when:
+      argument_path: "$.payout_usd"
+      operator: ">"
+      value: 25000
+
+  ingest_claim: {}
+  fraud_check: {}
+  adjudicate_claim: {}
+  run_quality_check: {}
