@@ -271,3 +271,101 @@ func TestPipeline_ShadowDenyPreservesRuleID(t *testing.T) {
 		t.Errorf("RuleID = %q after shadow conversion, want %q", got.RuleID, "sequence.only_after")
 	}
 }
+
+// policyWithTaint returns a block-mode policy where "taint-source" applies
+// taint and "taint-clearer" clears it. Used by taint mutation tests.
+func policyWithTaint() *policy.Policy {
+	return &policy.Policy{
+		EnforcementMode: policy.EnforcementBlock,
+		MayUse:          []string{"taint-source", "taint-clearer", "plain-tool"},
+		Tools: map[string]policy.ToolPolicy{
+			"taint-source":  {Taint: policy.TaintPolicy{Applies: true}},
+			"taint-clearer": {Taint: policy.TaintPolicy{Clears: true}},
+			"plain-tool":    {},
+		},
+	}
+}
+
+// TestPipeline_TaintMutation_AppliesOnAllow verifies that calling a tool with
+// taint.applies == true sets sess.Tainted = true after an Allow decision.
+func TestPipeline_TaintMutation_AppliesOnAllow(t *testing.T) {
+	p := engine.New(&stubEvaluator{decision: engine.Decision{Action: engine.Allow}})
+	s := &session.Session{ID: "sess-mut", Tainted: false}
+
+	got := p.Evaluate(context.Background(), call("taint-source"), s, policyWithTaint())
+	if got.Action != engine.Allow {
+		t.Fatalf("Action = %q, want Allow", got.Action)
+	}
+	if !s.Tainted {
+		t.Error("sess.Tainted = false after allowed call with taint.applies; want true")
+	}
+}
+
+// TestPipeline_TaintMutation_ClearsOnAllow verifies that calling a tool with
+// taint.clears == true sets sess.Tainted = false after an Allow decision.
+func TestPipeline_TaintMutation_ClearsOnAllow(t *testing.T) {
+	p := engine.New(&stubEvaluator{decision: engine.Decision{Action: engine.Allow}})
+	s := &session.Session{ID: "sess-mut", Tainted: true}
+
+	got := p.Evaluate(context.Background(), call("taint-clearer"), s, policyWithTaint())
+	if got.Action != engine.Allow {
+		t.Fatalf("Action = %q, want Allow", got.Action)
+	}
+	if s.Tainted {
+		t.Error("sess.Tainted = true after allowed call with taint.clears; want false")
+	}
+}
+
+// TestPipeline_TaintMutation_NoMutationOnDeny verifies that a Deny decision
+// does not trigger taint mutations. The session taint state is unchanged when
+// the call is blocked.
+func TestPipeline_TaintMutation_NoMutationOnDeny(t *testing.T) {
+	denyEv := &stubEvaluator{decision: engine.Decision{Action: engine.Deny, RuleID: "some.rule"}}
+	p := engine.New(denyEv)
+	s := &session.Session{ID: "sess-mut", Tainted: false}
+
+	got := p.Evaluate(context.Background(), call("taint-source"), s, policyWithTaint())
+	if got.Action != engine.Deny {
+		t.Fatalf("Action = %q, want Deny", got.Action)
+	}
+	if s.Tainted {
+		t.Error("sess.Tainted = true after denied call; taint mutations must not fire on non-Allow decisions")
+	}
+}
+
+// TestPipeline_TaintMutation_NoMutationOnShadowDeny verifies that a ShadowDeny
+// decision does not trigger taint mutations. Shadow mode allows the call through
+// to upstream but the engine's decision is still a violation.
+func TestPipeline_TaintMutation_NoMutationOnShadowDeny(t *testing.T) {
+	denyEv := &stubEvaluator{decision: engine.Decision{Action: engine.Deny, RuleID: "some.rule"}}
+	p := engine.New(denyEv)
+	s := &session.Session{ID: "sess-mut", Tainted: false}
+
+	pol := policyWithTaint()
+	pol.EnforcementMode = policy.EnforcementShadow
+
+	got := p.Evaluate(context.Background(), call("taint-source"), s, pol)
+	if got.Action != engine.ShadowDeny {
+		t.Fatalf("Action = %q, want ShadowDeny", got.Action)
+	}
+	if s.Tainted {
+		t.Error("sess.Tainted = true after shadow_deny decision; taint mutations must not fire on non-Allow decisions")
+	}
+}
+
+// TestPipeline_TaintMutation_PlainToolNoMutation verifies that a tool with no
+// taint policy leaves sess.Tainted unchanged whether it starts true or false.
+func TestPipeline_TaintMutation_PlainToolNoMutation(t *testing.T) {
+	p := engine.New(&stubEvaluator{decision: engine.Decision{Action: engine.Allow}})
+
+	for _, initial := range []bool{false, true} {
+		s := &session.Session{ID: "sess-mut", Tainted: initial}
+		got := p.Evaluate(context.Background(), call("plain-tool"), s, policyWithTaint())
+		if got.Action != engine.Allow {
+			t.Fatalf("initial=%v: Action = %q, want Allow", initial, got.Action)
+		}
+		if s.Tainted != initial {
+			t.Errorf("initial=%v: sess.Tainted changed to %v; plain-tool has no taint policy", initial, s.Tainted)
+		}
+	}
+}

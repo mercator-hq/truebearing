@@ -368,7 +368,6 @@
     to keep each rule function self-contained and independently testable.
   - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
     35/35 lint tests pass; 11/11 pre-existing parser tests still pass.
-21
 ---
 
 - [x] **Task 2.3** — `cmd/policy`: wire up all four policy commands
@@ -949,7 +948,7 @@
 
 ---
 
-- [ ] **Task 4.5** — `internal/engine`: Taint evaluator
+- [x] **Task 4.5** — `internal/engine`: Taint evaluator
       **Scope:**
   - Implement `internal/engine/taint.go`:
     - `TaintEvaluator` implements the taint logic from `mvp-plan.md §8.4`.
@@ -968,6 +967,33 @@
   **Satisfaction check:**
   - `go test ./internal/engine/...` passes.
   - Taint mutations happen in the pipeline, not the evaluator.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/engine/taint.go` — NEW: `TaintEvaluator` struct, `Evaluate` method, unexported
+    `taintApplyingTools` helper that builds the set of policy tools with `taint.applies == true`
+  - `internal/engine/taint_test.go` — NEW: `TestTaintEvaluator` (7 table-driven cases),
+    `TestTaintEvaluator_DenyReasonNamesTools`, `TestTaintEvaluator_ShadowMode`,
+    `TestTaintEvaluator_NeverAfterMultipleSources`, `BenchmarkTaintEvaluator`
+  - `internal/engine/pipeline.go` — MODIFIED: added `applyTaintMutations` helper; updated
+    `Pipeline.Evaluate` to call it after all evaluators return Allow; updated invariant 2 comment
+    to reflect that the pipeline is responsible for taint mutations
+  - `internal/engine/pipeline_test.go` — MODIFIED: added `policyWithTaint` helper and 5 new
+    mutation tests: `TestPipeline_TaintMutation_AppliesOnAllow`,
+    `TestPipeline_TaintMutation_ClearsOnAllow`, `TestPipeline_TaintMutation_NoMutationOnDeny`,
+    `TestPipeline_TaintMutation_NoMutationOnShadowDeny`, `TestPipeline_TaintMutation_PlainToolNoMutation`
+  **Notes:**
+  - Taint check logic: when session is tainted, first check if the tool has `taint.clears == true`
+    (allow — clearance path); then build the set of taint-applying tools from the policy; then check
+    if the tool's `never_after` list intersects that set (deny if so). If the policy has no
+    taint-applying tools, the taint flag is treated as stale and the call is allowed.
+  - `applyTaintMutations` applies `Clears` before `Applies` so a tool with both flags results in a
+    tainted session — `applies` wins as the more restrictive outcome. A `// Design:` comment in
+    `pipeline.go` documents this ordering.
+  - Taint mutations are NOT applied for `ShadowDeny` decisions; mutations only fire on `Allow`.
+  - Benchmark result: 402 ns/op, 3 allocs — well under the 2ms p99 target.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    36/36 engine tests pass (21 pre-existing + 15 new); full suite clean.
 
 ---
 

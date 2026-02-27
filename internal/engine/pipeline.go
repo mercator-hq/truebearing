@@ -28,8 +28,9 @@ func New(stages ...Evaluator) *Pipeline {
 //
 //  1. The caller is responsible for writing exactly one audit record from the
 //     returned Decision. Evaluate itself never writes audit records.
-//  2. sess and pol are passed to evaluators as read-only snapshots; mutations
-//     happen outside this method after the caller processes the decision.
+//  2. Evaluators receive sess and pol as read-only inputs; they must not
+//     mutate either. Taint state mutations are applied by this method after the
+//     Allow decision is reached, per invariant 2.
 //  3. The first non-Allow decision terminates the pipeline immediately.
 //  4. A non-nil error from any evaluator produces a Deny decision; the error
 //     is embedded in Reason and is never returned as a Go error to the caller.
@@ -58,7 +59,35 @@ func (p *Pipeline) Evaluate(ctx context.Context, call *ToolCall, sess *session.S
 			return d
 		}
 	}
+
+	// All evaluators allowed the call. Apply taint state mutations before
+	// returning. Mutations are applied here (the pipeline orchestrator) rather
+	// than inside any evaluator, satisfying invariant 2. The call that applies
+	// taint is itself allowed; the taint takes effect for subsequent calls.
+	applyTaintMutations(call, sess, pol)
+
 	return Decision{Action: Allow}
+}
+
+// applyTaintMutations updates sess.Tainted based on the called tool's taint
+// policy after a successful Allow decision. It is called exclusively by
+// Pipeline.Evaluate and is the only site in the engine that mutates session
+// state.
+//
+// Design: clears is applied before applies so that a tool with both flags set
+// (which the linter does not currently flag as an error) results in a tainted
+// session — "applies" wins as the more restrictive outcome.
+func applyTaintMutations(call *ToolCall, sess *session.Session, pol *policy.Policy) {
+	tp, ok := pol.Tools[call.ToolName]
+	if !ok {
+		return
+	}
+	if tp.Taint.Clears && sess.Tainted {
+		sess.Tainted = false
+	}
+	if tp.Taint.Applies {
+		sess.Tainted = true
+	}
 }
 
 // effectiveMode resolves the enforcement mode for a specific tool, honouring
