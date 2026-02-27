@@ -218,7 +218,7 @@
 
 ---
 
-- [ ] **Task 1.6** — `cmd/agent/register`: wire up `truebearing agent register`
+- [x] **Task 1.6** — `cmd/agent/register`: wire up `truebearing agent register`
       **Scope:**
   - Implement `cmd/agent/register.go` to actually work (first real CLI command).
   - It must: validate `--policy` file exists; parse the policy YAML just enough to extract `may_use`
@@ -234,6 +234,34 @@
     a JWT file, and a row in the database.
   - `truebearing agent list` shows the registered agent.
   - Re-registering the same name overwrites cleanly (no duplicate key error).
+
+  **Status:** Complete
+  **Files:**
+  - `internal/store/agents.go` — NEW: `Agent` struct, `UpsertAgent`, `ListAgents`, `AllowedTools`
+  - `internal/store/agents_test.go` — NEW: 5 tests covering insert, overwrite, empty list, ordering,
+    and AllowedTools decoding
+  - `cmd/agent/register.go` — replaced stub; implements full registration flow with `--expiry-days` flag
+  - `cmd/agent/list.go` — replaced stub; tabwriter table with name, policy, tool count, registered, expires
+  - `cmd/agent/list_test.go` — NEW: white-box tests for unexported `jwtExpiry` helper (valid + 6 invalid cases)
+  - `testdata/minimal.policy.yaml` — NEW: minimal 3-tool policy fixture for manual and future integration tests
+  **Notes:**
+  - `minimalPolicy` struct in `register.go` parses only `may_use: []string`. The full parser is Phase 2
+    (Task 2.1). A `// Design:` comment explains the intentional scope limit.
+  - `resolveDBPath(tbHome string)` is defined in `register.go` and shared with `list.go` within the
+    same `cmd/agent` package. It reads `viper.GetString("db")` then falls back to
+    `~/.truebearing/truebearing.db`.
+  - `Agent.JWTPreview` stores the full JWT text (not just 32 chars as the schema comment suggests).
+    A `// Design:` comment in `agents.go` explains the tradeoff: storing the full JWT lets `agent list`
+    decode and display the expiry via `jwtExpiry()` without adding a separate schema column. JWTs are
+    not secrets — they are intended to be shared as Bearer tokens.
+  - `jwtExpiry` in `list.go` decodes the JWT payload segment with `base64.RawURLEncoding` (standard
+    for JWTs per RFC 7519) and extracts the `exp` field without signature verification. This is safe
+    for a local admin display command — we issued these tokens ourselves.
+  - nil `may_use` in policy YAML is normalised to `[]string{}` before JSON marshalling, so
+    `allowed_tools_json` is always `"[]"` not `"null"`.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+  - Smoke-tested manually: register creates key files + JWT + DB row; list shows tabular output with
+    expiry; re-register overwrites to a single row with updated timestamp.
 
 ---
 

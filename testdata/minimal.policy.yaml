@@ -1,0 +1,11 @@
+# Minimal policy fixture for agent registration tests (Task 1.6).
+# Demonstrates the smallest valid may_use list needed to exercise
+# GenerateKeypair + MintAgentJWT + UpsertAgent in a single command.
+version: "1"
+agent: test-agent
+enforcement_mode: shadow
+
+may_use:
+  - tool_one
+  - tool_two
+  - check_escalation_status
