@@ -1047,7 +1047,7 @@
 
 ---
 
-- [ ] **Task 4.7** — `internal/engine`: Escalation evaluator
+- [x] **Task 4.7** — `internal/engine`: Escalation evaluator
       **Scope:**
   - Implement `internal/engine/escalation.go`:
     - `EscalationEvaluator` implements `mvp-plan.md §8.6`.
@@ -1065,6 +1065,41 @@
   - `go test ./internal/engine/...` passes.
   - An approved escalation unblocks the subsequent call without re-escalating.
   - Invalid paths and operators fail closed (deny), never allow.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/store/escalations.go` — NEW: `Escalation` struct, `CreateEscalation`, `HasApprovedEscalation`.
+    `CreateEscalation` is scoped to the minimum needed for the evaluator's test harness; the full state
+    machine (Approve, Reject, GetStatus, List) is implemented in Task 5.5. `HasApprovedEscalation` queries
+    all approved escalations for (session_id, tool_name) and compares SHA-256 hashes of stored arguments_json
+    in Go, because the escalations schema stores raw JSON not a hash column.
+  - `internal/store/escalations_test.go` — NEW: 8 test functions: insert, duplicate-ID error, no records,
+    pending not matched, approved hash match, hash mismatch, session isolation, tool isolation,
+    NULL arguments matched by empty hash.
+  - `internal/engine/escalation.go` — NEW: `EscalationEvaluator` struct and `Evaluate` method;
+    unexported `applyEscalationOperator`, `applyNumericOp`, and `toFloat64` helpers.
+  - `internal/engine/escalation_test.go` — NEW: 16-case table-driven `TestEscalationEvaluator`
+    (all numeric and string operators, boundary at threshold, approval hash isolation, shadow mode,
+    store error); `TestEscalationEvaluator_ToolNotInPolicyTools`, `TestEscalationEvaluator_ApprovalHashIsolation`,
+    `TestEscalationEvaluator_StoreError`, `TestEscalationEvaluator_ShadowMode`,
+    `TestEscalationEvaluator_InvalidRegex`, `BenchmarkEscalationEvaluator`.
+  - `go.mod` / `go.sum` — `github.com/tidwall/gjson v1.18.0` added (approved dependency from CLAUDE.md).
+  **Notes:**
+  - JSONPath normalisation: the policy DSL uses `$.field` notation; gjson uses `field` (no `$` sigil).
+    `strings.TrimPrefix(path, "$.")` strips the prefix so both `$.amount_usd` and `amount_usd` work
+    identically. A path that becomes empty after stripping is returned as an error (fail closed).
+  - Argument-path not-found → error (fail closed). When the argument path does not resolve to a value
+    in the call arguments, `!result.Exists()` returns an error that the pipeline converts to Deny. This
+    is the correct fail-closed behaviour: if we cannot evaluate the condition we cannot allow the call.
+  - `toFloat64` handles `int`, `int64`, `float32`, and `float64` — all numeric types yaml.v3 can produce.
+    Unknown types default to 0 (the safer direction for comparisons); this path is unreachable for well-formed
+    YAML but is documented with a comment.
+  - Approval matching: the SHA-256 hash of `call.Arguments` is compared against hashes of stored
+    `arguments_json` in the approved escalation records. NULL arguments_json in the DB is treated as an
+    empty byte slice for hashing, matching a call whose `Arguments` is nil.
+  - Benchmark result: 91 ns/op, 1 alloc — the hot path (rule not triggered) never hits the database.
+    All benchmarks remain well under the 2ms p99 target.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 
