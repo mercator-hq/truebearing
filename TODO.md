@@ -492,7 +492,7 @@
 
 ---
 
-- [ ] **Task 3.1** — `pkg/mcpparse`: MCP JSON-RPC wire format parser
+- [x] **Task 3.1** — `pkg/mcpparse`: MCP JSON-RPC wire format parser
       **Scope:**
   - Implement `pkg/mcpparse/types.go` and `pkg/mcpparse/parse.go` with the types from
     `mvp-plan.md §7.1`.
@@ -506,6 +506,32 @@
   - `go test ./pkg/mcpparse/...` passes.
   - `go test -fuzz=FuzzParseRequest ./pkg/mcpparse/...` runs for 30 seconds without panicking.
   - `pkg/mcpparse` has zero imports from `internal/` — it is a pure protocol parser.
+
+  **Status:** Complete
+  **Files:**
+  - `pkg/mcpparse/types.go` — NEW: `MCPRequest` and `ToolCallParams` structs with `json.RawMessage`
+    fields for `ID`, `Params`, and `Arguments`; `IsTool` function.
+  - `pkg/mcpparse/parse.go` — NEW: `ParseRequest` (validates `jsonrpc: "2.0"`),
+    `ParseToolCallParams` (validates non-empty `name`). Both return errors, never panic.
+  - `pkg/mcpparse/parse_test.go` — NEW: 4 table-driven test functions, 24 total subtests:
+    `TestParseRequest` (9 cases), `TestIsTool` (5 cases), `TestParseToolCallParams` (7 cases),
+    `TestParseRequest_IDPreservation` (3 cases — string/numeric/null IDs preserved as raw JSON).
+  - `pkg/mcpparse/parse_fuzz_test.go` — NEW: `FuzzParseRequest` with 9 seed corpus entries
+    covering valid, invalid, and edge-case inputs.
+  **Notes:**
+  - `IsTool` is a package-level function (not a method on `MCPRequest`) to match the plan's
+    `mvp-plan.md §7.1` signature exactly. The plan shows both a method and a function variant;
+    the function form was chosen so proxy code can call `mcpparse.IsTool(r)` without needing
+    a receiver — cleaner at the call site.
+  - `json.RawMessage` is used for `ID`, `Params`, and `Arguments` throughout. JSON-RPC 2.0
+    allows `id` to be string, number, or null; preserving it as raw JSON ensures the proxy can
+    reflect it back in synthetic responses without normalisation.
+  - `ParseRequest` rejects a missing `jsonrpc` field (unmarshals to `""`) — fail-closed per
+    CLAUDE.md §8. A missing field produces the same error as a wrong version.
+  - Zero imports from `internal/` — confirmed by `go list -f '{{.Imports}}' ./pkg/mcpparse/`
+    showing only stdlib packages.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    24/24 unit tests pass; all 9 fuzz seed corpus entries pass.
 
 ---
 
