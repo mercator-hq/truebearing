@@ -997,7 +997,7 @@
 
 ---
 
-- [ ] **Task 4.6** — `internal/engine`: Sequence evaluator
+- [x] **Task 4.6** — `internal/engine`: Sequence evaluator
       **Scope:**
   - Implement `internal/engine/sequence.go`:
     - `SequenceEvaluator` implements all three predicates from `mvp-plan.md §8.5`.
@@ -1019,6 +1019,31 @@
   - `go test ./internal/engine/...` passes.
   - Benchmark with 1000 events runs under 2ms p99.
   - All violations are reported in a single denial, not just the first.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/engine/sequence.go` — NEW: `SequenceEvaluator` with `Store *store.Store` dependency;
+    implements `only_after`, `never_after`, and `requires_prior_n` predicates; collects all
+    violations before returning; uses a single-pass frequency map for O(n) history traversal.
+  - `internal/engine/sequence_test.go` — NEW: 17-case table-driven `TestSequenceEvaluator` covering
+    all predicate paths; `TestSequenceEvaluator_AllViolationsReported` (4 simultaneous violations);
+    `TestSequenceEvaluator_StoreError` (error propagation, fail-closed); `TestSequenceEvaluator_ShadowMode`
+    (pipeline-level shadow conversion); `BenchmarkSequenceEvaluator` (1000-event history).
+  **Notes:**
+  - `SequenceEvaluator` stores a `*store.Store` field passed at construction time, consistent with
+    the pipeline pattern (`engine.New(&SequenceEvaluator{Store: myStore})`).
+  - Only events with `decision == "allow"` or `decision == "shadow_deny"` are counted as history.
+    Denied events were never executed upstream and must not satisfy sequence predicates.
+  - `shadow_deny` events count as executed (they were forwarded to upstream) so they satisfy both
+    `only_after` and `requires_prior_n` and trigger `never_after`. Two Design: comments in the source
+    explain the ORDER BY and all-violations-collected decisions.
+  - Benchmark result on Apple M1: ~939µs/op with 1000 events (well under the 2ms p99 target).
+    Memory: 555KB/op, 14681 allocs/op — dominated by SQLite row scanning.
+  - RuleID is `"sequence"` for all violations; individual predicate names appear in the Reason string,
+    which is joined from the violations slice with `"; "` separator.
+  - `TestSequenceEvaluator_StoreError` opens the store directly (not via `NewTestDB`) to avoid a
+    double-close from `t.Cleanup` after the intentional `st.Close()` in the test body.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 
