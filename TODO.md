@@ -24,7 +24,7 @@
 - [x] **Task 1.1** — Repository scaffold & go.mod initialisation
       **Scope:**
   - Create the full directory structure from `mvp-plan.md §1.1` verbatim.
-  - Initialise `go.mod` with module path `github.com/mercator/truebearing`.
+  - Initialise `go.mod` with module path `github.com/mercator-hq/truebearing`.
   - Add approved dependencies to `go.mod` (cobra, viper, jwt, sqlite, yaml.v3, uuid, gjson).
   - Create empty placeholder `doc.go` files in every `internal/` and `pkg/` package with a one-line package comment.
   - Create `docs/` directory and copy `mvp-plan.md` into it.
@@ -56,7 +56,7 @@
 
 ---
 
-- [ ] **Task 1.2** — CLI framework: cobra root + all command stubs
+- [x] **Task 1.2** — CLI framework: cobra root + all command stubs
       **Scope:**
   - Implement `cmd/main.go` with cobra root command.
   - Implement stub command files for every command in `mvp-plan.md §13`:
@@ -74,6 +74,33 @@
   - `truebearing policy --help` lists all policy subcommands.
   - Every command runs and prints `[not yet implemented]` without panicking.
   - `go vet ./...` clean.
+
+  **Status:** Complete
+  **Files:**
+  - `cmd/main.go` — cobra root command, viper config wiring, `PersistentPreRunE`
+  - `cmd/serve.go` — serve stub (flags: --upstream, --port, --capture-trace, --stdio)
+  - `cmd/simulate.go` — simulate stub (flags: --trace, --old-policy)
+  - `cmd/policy/policy.go`, `validate.go`, `lint.go`, `explain.go`, `diff.go`
+  - `cmd/audit/audit.go`, `verify.go`, `query.go`, `replay.go`
+  - `cmd/session/session.go`, `list.go`, `inspect.go`, `terminate.go`
+  - `cmd/escalation/escalation.go`, `list.go`, `approve.go`, `reject.go`
+  - `cmd/agent/agent.go`, `register.go`, `list.go`
+  **Notes:**
+  - Subcommand groups (`cmd/policy/`, `cmd/audit/`, etc.) are separate Go packages imported
+    by `package main` in `cmd/`. Package names match the directory name (e.g., `package policy`,
+    `package audit`) for clean import-site readability.
+  - `PersistentPreRunE` on root calls `initConfig`, which loads `~/.truebearing/config.yaml`
+    and merges a per-project `.truebearing.yaml` from the working directory using a separate
+    viper instance so global config search paths are not modified.
+  - `--policy` and `--db` are persistent flags on root, inherited by all subcommands.
+    `viper.BindPFlag` links them so config file values serve as fallbacks to flag defaults.
+  - `SilenceErrors: true` and `SilenceUsage: true` are set on root; errors are printed
+    explicitly in `main()` to avoid cobra's default double-printing.
+  - The cobra `completion` command appears in `--help` automatically; this is expected
+    cobra behavior and is not removed.
+  - `// TODO(task-id):` markers in stubs reference the implementing task: serve/simulate →
+    Phase 3/5; policy → 2.3; audit → 5.3; session → 5.6; escalation → 5.5; agent → 1.6.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 

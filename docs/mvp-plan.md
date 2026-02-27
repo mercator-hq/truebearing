@@ -1336,7 +1336,7 @@ For the 90-day sprint to closed beta, TrueBearing runs locally on the design par
 brew install truebearing          # macOS
 curl -sf https://truebearing.dev/install.sh | sh   # Linux
 
-# Or: go install github.com/mercator/truebearing@latest
+# Or: go install github.com/mercator-hq/truebearing@latest
 
 # Initialize
 truebearing agent register my-finance-agent --policy ./policy.yaml
