@@ -104,7 +104,7 @@
 
 ---
 
-- [ ] **Task 1.3** — `internal/store`: SQLite DAL, schema, open/migrate
+- [x] **Task 1.3** — `internal/store`: SQLite DAL, schema, open/migrate
       **Scope:**
   - Implement `internal/store/store.go`: `Open(path string) (*Store, error)` that opens SQLite,
     sets `PRAGMA journal_mode=WAL`, `PRAGMA foreign_keys=ON`, `PRAGMA synchronous=NORMAL`.
@@ -119,6 +119,28 @@
   - `go test ./internal/store/...` passes.
   - Schema matches the plan exactly (column names, types, constraints, foreign keys).
   - No query methods exist yet — only `Open`, `Close`, `NewTestDB`.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/store/store.go` — `Store` struct, `Open` (with PRAGMAs + migrate), `Close`
+  - `internal/store/schema.go` — `migrate()` + five `CREATE TABLE IF NOT EXISTS` DDL constants
+  - `internal/store/testing.go` — `NewTestDB(t *testing.T) *Store` using unique named in-memory DSNs
+  - `internal/store/store_test.go` — 7 tests (50 subtests): all tables exist, all columns present,
+    WAL/foreign-key PRAGMAs set, migrate is idempotent, NewTestDB isolation, FK constraint enforced
+  **Notes:**
+  - `modernc.org/sqlite` and `github.com/google/uuid` were added to `go.mod`/`go.sum` (both approved
+    dependencies from CLAUDE.md). uuid was pulled in transitively by modernc.org/sqlite.
+  - `Store.db` has `SetMaxOpenConns(1)` to prevent "database is locked" errors from concurrent
+    writes in the connection pool. This is standard practice for SQLite + database/sql.
+  - In-memory databases return `"memory"` from `PRAGMA journal_mode` (not `"wal"`), even when WAL
+    was set; `TestOpen_WALMode` accepts both values. File-based databases in production return `"wal"`.
+  - `NewTestDB` uses an atomic counter suffix (`file:testdbN?mode=memory&cache=shared`) to give
+    each call a distinct named in-memory database, preventing state leakage between parallel tests.
+  - `testing.go` is a non-test file importing `testing` — this is intentional so `NewTestDB` is
+    accessible from tests in other packages (e.g. `internal/engine` integration tests in Task 4.8).
+  - `TestSessionEventsFK` confirms that `foreign_keys=ON` is enforced at the DB level: inserting a
+    `session_events` row referencing a non-existent session returns an error.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 
