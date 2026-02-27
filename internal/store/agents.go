@@ -60,6 +60,24 @@ func (s *Store) UpsertAgent(a *Agent) error {
 	return nil
 }
 
+// GetAgent returns the agent row with the given name.
+// Returns a wrapped sql.ErrNoRows if no agent with that name is registered.
+func (s *Store) GetAgent(name string) (*Agent, error) {
+	const query = `
+		SELECT name, public_key_pem, policy_file, allowed_tools_json, registered_at, jwt_preview
+		FROM agents
+		WHERE name = ?`
+	row := s.db.QueryRow(query, name)
+	a := new(Agent)
+	if err := row.Scan(
+		&a.Name, &a.PublicKeyPEM, &a.PolicyFile,
+		&a.AllowedToolsJSON, &a.RegisteredAt, &a.JWTPreview,
+	); err != nil {
+		return nil, fmt.Errorf("looking up agent %q: %w", name, err)
+	}
+	return a, nil
+}
+
 // ListAgents returns all agent rows ordered by registration time ascending.
 func (s *Store) ListAgents() ([]*Agent, error) {
 	const query = `

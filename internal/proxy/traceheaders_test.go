@@ -48,8 +48,8 @@ func TestExtractClientTraceID(t *testing.T) {
 			// Priority order matches the field order of tracingHeaders.
 			name: "traceparent and x-datadog-trace-id both present — traceparent wins",
 			headers: map[string]string{
-				"traceparent":          "00-trace-span-01",
-				"x-datadog-trace-id":   "9999",
+				"traceparent":        "00-trace-span-01",
+				"x-datadog-trace-id": "9999",
 			},
 			want: "traceparent=00-trace-span-01",
 		},

@@ -565,7 +565,7 @@
 
 ---
 
-- [ ] **Task 3.3** — `internal/proxy`: JWT auth middleware
+- [x] **Task 3.3** — `internal/proxy`: JWT auth middleware
       **Scope:**
   - Implement `internal/proxy/auth.go`:
     - `AuthMiddleware(store *store.Store) func(http.Handler) http.Handler`.
@@ -581,6 +581,33 @@
   **Satisfaction check:**
   - `go test ./internal/proxy/...` passes.
   - No path through the middleware allows a request with a bad JWT to proceed.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/proxy/auth.go` — NEW: `contextKey` type, `claimsKey` constant, `AgentClaimsFromContext`,
+    `AuthMiddleware`, and unexported helpers `bearerToken`, `unverifiedAgentClaim`, `parsePublicKeyPEM`,
+    `writeUnauthorized`.
+  - `internal/proxy/auth_test.go` — NEW: 14 test functions (9 middleware integration tests + 5 helper
+    unit tests): missing header, non-Bearer scheme, empty token, malformed token, agent not in DB,
+    invalid signature, expired token, valid token (claims in context), next-handler reached, response
+    body format; plus table-driven tests for `bearerToken` (5 cases), `unverifiedAgentClaim` (4 cases),
+    `parsePublicKeyPEM` (4 cases).
+  - `internal/store/agents.go` — MODIFIED: added `GetAgent(name string) (*Agent, error)` — needed by
+    `AuthMiddleware` to look up the agent's public key by name extracted from the unverified JWT payload.
+  - `internal/proxy/traceheaders.go`, `internal/proxy/traceheaders_test.go` — MODIFIED: mechanical
+    `gofmt` whitespace fix (comment alignment) left from Task 3.2; no logic change.
+  **Notes:**
+  - The two-step decode (unverified name → DB key lookup → full signature verify) is the standard
+    pattern for public-key JWT systems. A `// Design:` comment in `unverifiedAgentClaim` explains why
+    the unverified decode is safe: an attacker who fabricates the agent name gets "not registered" or
+    a signature failure — there is no path that skips cryptographic verification.
+  - `AgentClaimsFromContext` and `AuthMiddleware` are both exported. The context key type (`contextKey`)
+    and value (`claimsKey`) are unexported to prevent external packages from injecting claims directly.
+  - `parsePublicKeyPEM` is an unexported helper that mirrors `identity.LoadPublicKey` but operates on
+    a PEM string from the `agents` table rather than a file path. Not added to `internal/identity`
+    because identity owns file-based key I/O; in-memory parsing for the middleware is local to proxy.
+  - `writeUnauthorized` uses a typed struct (not `map[string]string`) for deterministic JSON key order.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 

@@ -9,11 +9,11 @@ import (
 // in priority order (first match wins). The order matches the prevalence of
 // each tracing system among design-partner stacks.
 var tracingHeaders = []string{
-	"traceparent",            // W3C standard — LangSmith, Jaeger, Honeycomb, most modern stacks
-	"x-datadog-trace-id",     // Datadog
-	"x-cloud-trace-context",  // Google Cloud Trace
-	"x-amzn-trace-id",        // AWS X-Ray
-	"x-b3-traceid",           // Zipkin B3 (LangChain default in some configs)
+	"traceparent",           // W3C standard — LangSmith, Jaeger, Honeycomb, most modern stacks
+	"x-datadog-trace-id",    // Datadog
+	"x-cloud-trace-context", // Google Cloud Trace
+	"x-amzn-trace-id",       // AWS X-Ray
+	"x-b3-traceid",          // Zipkin B3 (LangChain default in some configs)
 }
 
 // ExtractClientTraceID reads the first recognised distributed tracing header
