@@ -66,3 +66,9 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error {
 	return s.db.Close()
 }
+
+// Ping verifies the underlying database connection is still alive. It is used
+// by the health endpoint to detect a degraded proxy state without issuing SQL.
+func (s *Store) Ping() error {
+	return s.db.Ping()
+}

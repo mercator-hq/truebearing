@@ -22,37 +22,53 @@ type Proxy struct {
 	st       *store.Store
 	pol      *policy.Policy
 	rp       *httputil.ReverseProxy
+	// dbPath is stored for display in GET /health responses. It is the path
+	// that was passed to store.Open() and is not used for any DB operation
+	// inside the proxy itself.
+	dbPath string
 }
 
 // New creates a Proxy that forwards traffic to upstream, uses st for agent
-// authentication, and pol for policy evaluation.
+// authentication, pol for policy evaluation, and records dbPath for health
+// responses.
 //
 // Design: pol is accepted here rather than loaded inside the proxy so that
 // cmd/serve.go can validate the policy file at startup and fail fast before
 // binding a port. Accepting a parsed *policy.Policy keeps the constructor
 // pure and testable without requiring filesystem access.
-func New(upstream *url.URL, st *store.Store, pol *policy.Policy) *Proxy {
+func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string) *Proxy {
 	rp := httputil.NewSingleHostReverseProxy(upstream)
 	return &Proxy{
 		upstream: upstream,
 		st:       st,
 		pol:      pol,
 		rp:       rp,
+		dbPath:   dbPath,
 	}
 }
 
-// Handler returns the top-level HTTP handler with all middleware chained in order:
+// Handler returns the top-level HTTP handler. GET /health is registered before
+// the auth middleware so SDK subprocess management can poll it without a JWT.
+// All other requests are routed through: auth middleware → session middleware →
+// MCP router.
 //
-//	auth middleware → session middleware → MCP router
-//
-// The returned handler is suitable for passing to http.ListenAndServe.
+// Design: a ServeMux is used so /health can bypass auth via explicit route
+// registration rather than conditional logic inside a middleware. This makes
+// the no-auth contract visible at a glance and prevents accidental auth bypass
+// on other routes.
 func (p *Proxy) Handler() http.Handler {
-	return AuthMiddleware(p.st)(SessionMiddleware()(http.HandlerFunc(p.handleMCP)))
+	mux := http.NewServeMux()
+	// Health check bypasses auth — no JWT required. Registered first so the
+	// pattern match is unambiguous. SDK subprocess readiness polls this route.
+	mux.HandleFunc("/health", p.handleHealth)
+	// All other routes go through JWT auth then session enforcement.
+	mux.Handle("/", AuthMiddleware(p.st)(SessionMiddleware()(http.HandlerFunc(p.handleMCP))))
+	return mux
 }
 
 // Policy returns the parsed policy loaded at proxy startup. Downstream handlers
-// such as the health endpoint (Task 3.5a) and the engine pipeline (Task 4.8)
-// use this to access the policy fingerprint and rule configuration.
+// such as the health endpoint and the engine pipeline (Task 4.8) use this to
+// access the policy fingerprint and rule configuration.
 func (p *Proxy) Policy() *policy.Policy {
 	return p.pol
 }

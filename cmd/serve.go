@@ -70,7 +70,7 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 				}
 			}()
 
-			p := proxy.New(upstreamURL, st, pol)
+			p := proxy.New(upstreamURL, st, pol, dbPath)
 
 			addr := fmt.Sprintf(":%d", port)
 			fmt.Fprintf(cmd.OutOrStdout(), "TrueBearing proxy\n")

@@ -65,7 +65,7 @@ func newTestProxyServer(t *testing.T, upstreamReceived *bool) (proxyServer *http
 	token = mintTestToken(t, priv, "test-agent", time.Hour)
 
 	pol := parseTestPolicy(t)
-	p := New(upstreamURL, st, pol)
+	p := New(upstreamURL, st, pol, "")
 
 	proxyServer = httptest.NewServer(p.Handler())
 	t.Cleanup(proxyServer.Close)

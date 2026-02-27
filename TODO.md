@@ -368,7 +368,7 @@
     to keep each rule function self-contained and independently testable.
   - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
     35/35 lint tests pass; 11/11 pre-existing parser tests still pass.
-
+21
 ---
 
 - [x] **Task 2.3** — `cmd/policy`: wire up all four policy commands
@@ -700,7 +700,7 @@
 
 ---
 
-- [ ] **Task 3.5a** — `GET /health` endpoint
+- [x] **Task 3.5a** — `GET /health` endpoint
       **Scope:**
   - Add a `GET /health` route to the proxy HTTP server (registered before auth middleware —
     health checks must not require a JWT).
@@ -728,6 +728,35 @@
   - `curl http://localhost:7773/health` returns 200 with the correct JSON body.
   - No JWT required to call it.
   - SDK subprocess management can use it as a readiness probe.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/proxy/health.go` — NEW: `proxyVersion` constant, `healthResponse` struct,
+    `handleHealth` (200 ok / 503 degraded), `writeHealthDegraded` helper.
+  - `internal/proxy/health_test.go` — NEW: 4 tests: `TestHealth_Healthy` (200 + correct
+    fields), `TestHealth_NoJWTRequired` (bypasses auth middleware), `TestHealth_Degraded_DBUnreachable`
+    (503 when DB closed), `TestHealth_Degraded_PolicyFileUnreadable` (503 when SourcePath does
+    not exist on disk).
+  - `internal/proxy/proxy.go` — MODIFIED: added `dbPath string` field to `Proxy`; updated
+    `New()` to accept `dbPath string`; replaced single-chain `Handler()` with an `http.ServeMux`
+    that registers `/health` before the auth-gated `"/"` catch-all.
+  - `internal/proxy/proxy_test.go` — MODIFIED: updated `newTestProxyServer` to pass `""` as
+    `dbPath` argument to `New()`.
+  - `internal/store/store.go` — MODIFIED: added `Ping() error` method delegating to `db.Ping()`.
+  - `cmd/serve.go` — MODIFIED: passes `dbPath` as fourth argument to `proxy.New()` so the health
+    response displays the correct database path.
+  **Notes:**
+  - `http.NewServeMux` is used in `Handler()` so `/health` is explicitly registered before the
+    auth chain — no conditional logic inside middleware. `"/"` is the catch-all and routes
+    everything else through `AuthMiddleware → SessionMiddleware → handleMCP`.
+  - `handleHealth` checks `os.Stat(p.pol.SourcePath)` only when `SourcePath != ""`. A policy
+    loaded via `ParseBytes` with an empty source path (used in tests) skips the file check,
+    avoiding filesystem dependencies in unit tests.
+  - For `TestHealth_Degraded_DBUnreachable`, the store is opened via `store.Open()` directly
+    (not `NewTestDB`) to avoid a conflict with `NewTestDB`'s `t.Cleanup` that calls
+    `t.Errorf` on double-close. The store is closed immediately to make `Ping()` fail.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    44/44 proxy tests pass (40 pre-existing + 4 new health tests).
 
 ---
 
