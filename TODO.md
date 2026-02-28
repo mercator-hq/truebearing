@@ -1736,22 +1736,23 @@
 
 ---
 
-- [ ] **Task 8.3** — `truebearing audit export`: JSONL export command
-      **Priority:** High — needed for `audit verify` to operate on live proxy records cleanly.
-      **Scope:**
-  - Add `truebearing audit export` subcommand in `cmd/audit/export.go`.
-  - Flags: `--session <id>` (filter by session), `--from`, `--to` (same format as `audit query`),
-    `--output <file>` (default stdout).
-  - Reads from `store.QueryAuditLog`, marshals each record as one JSON object per line (JSONL),
-    using the snake_case JSON tags from Task 8.2.
-  - Output is directly pipe-able to `truebearing audit verify --key <pubkey>`.
-  - Write tests: export with no filter produces all records; session filter produces only that
-    session's records; output is valid JSONL (exactly one JSON object per line, no trailing comma).
-  - Update `docs/demo-script.md` Act 4 to use `audit export | audit verify` as the standard flow.
-
-  **Satisfaction check:**
-  - `truebearing audit export | truebearing audit verify` works end-to-end with all `OK`.
-  - `truebearing audit export --session <id> --output audit.jsonl` writes a usable file.
+- [x] **Task 8.3** — `truebearing audit export`: JSONL export command
+      **Status:** Complete
+      **Files:** `cmd/audit/export.go` (new), `cmd/audit/audit.go` (register command),
+      `cmd/audit/audit_test.go` (4 new tests + seedAuditRecord helper), `docs/demo-script.md`
+  **Notes:**
+  - `cmd/audit/export.go` adds `newExportCommand()` (cobra subcommand) and `writeExport()`
+    (testable inner function that takes `*store.Store`, `store.AuditFilter`, `io.Writer`).
+  - Reuses `buildAuditFilter` from `query.go` (passing empty strings for unused tool/decision/
+    traceID fields) and `writeQueryJSON` from `query.go` for the JSONL serialisation, so the
+    output format is identical to `audit query --format json` — `audit verify` consumes both.
+  - Flags: `--session`, `--from`, `--to`, `--output` (default stdout). No `--tool`, `--decision`,
+    or `--trace-id` flags — the export is for archival; query is for ad-hoc filtering.
+  - `docs/demo-script.md` Act 4 updated: the primary verification pipeline now reads
+    `./truebearing audit export | ./truebearing audit verify` with a note on file archiving.
+  - Tests use `store.NewTestDB(t)` with `st.AppendAuditRecord` seeding; no mocks, real SQLite.
+  - 4 new tests: EmptyDB, NoFilter_AllRecords, SessionFilter_FiltersCorrectly,
+    ValidJSONL_NoTrailingComma. All pass.
 
 ---
 

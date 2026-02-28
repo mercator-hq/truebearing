@@ -22,6 +22,7 @@ and replay captured session traces against updated policies.`,
 
 	cmd.AddCommand(newVerifyCommand())
 	cmd.AddCommand(newQueryCommand())
+	cmd.AddCommand(newExportCommand())
 	cmd.AddCommand(newReplayCommand())
 
 	return cmd

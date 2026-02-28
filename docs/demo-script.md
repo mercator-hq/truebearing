@@ -315,17 +315,22 @@ RECORDED_AT           SESSION     SEQ  AGENT           TOOL                    D
 2026-02-28T14:05:00Z  sess-demo     1  payments-agent  execute_wire_transfer   deny      sequence.only_after: "verify_invoice" has not b...
 ```
 
-Now show that every audit record is signed and verifiable. Pipe the audit log directly into the verifier:
+Now show that every audit record is signed and verifiable. Export the live database and pipe it directly into the verifier:
 
 ```sh
-# audit query --format json emits JSONL (one signed record per line).
+# audit export reads from the live database and writes JSONL to stdout.
 # audit verify reads JSONL from stdin when no file argument is given.
-./truebearing audit query --format json | ./truebearing audit verify
+./truebearing audit export | ./truebearing audit verify
+
+# To save the export to a file for offline analysis or archiving:
+./truebearing audit export --output audit-$(date +%F).jsonl
+./truebearing audit verify audit-$(date +%F).jsonl
 ```
 
-> **Presenter note:** This pipeline works end-to-end now that `audit.Sign` and `audit.Write` are
-> wired into the proxy handler (Task 8.1). If the database is empty (fresh demo environment with
-> no tool calls yet), `verify` will print "(no records found in file)". In that case, run a few
+> **Presenter note:** `audit export` reads directly from the SQLite database — no intermediate
+> file required. The pipeline works end-to-end now that `audit.Sign` and `audit.Write` are wired
+> into the proxy handler (Task 8.1). If the database is empty (fresh demo environment with no
+> tool calls yet), `verify` will print "(no records found in file)". In that case, run a few
 > tool calls through the proxy first, then re-run the pipeline.
 
 **Expected output (once proxy audit wiring is complete):**

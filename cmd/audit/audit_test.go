@@ -10,6 +10,26 @@ import (
 	"github.com/mercator-hq/truebearing/internal/store"
 )
 
+// seedAuditRecord is a test helper that inserts one audit record into st.
+// All non-essential fields receive deterministic placeholder values so that
+// tests focus on the fields under test (session_id, tool_name, decision).
+func seedAuditRecord(t *testing.T, st *store.Store, id, sessionID string, seq uint64, toolName, decision string) {
+	t.Helper()
+	err := st.AppendAuditRecord(
+		id, sessionID, seq,
+		"test-agent", toolName,
+		"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", // sha256("")
+		decision, "",
+		"fp-test", "jwtsha-test",
+		"",
+		time.Now().UnixNano(),
+		"sig-placeholder",
+	)
+	if err != nil {
+		t.Fatalf("seedAuditRecord %s: %v", id, err)
+	}
+}
+
 // --- buildAuditFilter tests ---
 
 func TestBuildAuditFilter_EmptyInputs(t *testing.T) {
@@ -355,5 +375,118 @@ func TestWriteQueryCSV_WithRecord(t *testing.T) {
 	}
 	if !strings.Contains(out, "2026-02-01T00:00:00Z") {
 		t.Errorf("expected RFC3339 timestamp in CSV output, got:\n%s", out)
+	}
+}
+
+// --- writeExport tests ---
+
+func TestWriteExport_EmptyDB(t *testing.T) {
+	st := store.NewTestDB(t)
+	var buf bytes.Buffer
+	if err := writeExport(st, store.AuditFilter{}, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// An empty database must produce zero bytes — no JSON null, no empty array.
+	if buf.Len() != 0 {
+		t.Errorf("expected empty output for empty database, got %q", buf.String())
+	}
+}
+
+func TestWriteExport_NoFilter_AllRecords(t *testing.T) {
+	st := store.NewTestDB(t)
+	seedAuditRecord(t, st, "rec-exp-001", "sess-a", 1, "read_invoice", "allow")
+	seedAuditRecord(t, st, "rec-exp-002", "sess-b", 1, "submit_claim", "deny")
+	seedAuditRecord(t, st, "rec-exp-003", "sess-a", 2, "verify_invoice", "allow")
+
+	var buf bytes.Buffer
+	if err := writeExport(st, store.AuditFilter{}, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+
+	// All three records must appear.
+	for _, wantID := range []string{"rec-exp-001", "rec-exp-002", "rec-exp-003"} {
+		if !strings.Contains(out, wantID) {
+			t.Errorf("expected record %q in export output, got:\n%s", wantID, out)
+		}
+	}
+
+	// Output must be JSONL: exactly three non-empty lines.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 JSONL lines for 3 records, got %d: %q", len(lines), out)
+	}
+
+	// Each line must be valid JSON with snake_case keys.
+	for i, line := range lines {
+		var obj map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Errorf("line %d is not valid JSON: %v\nline: %q", i+1, err, line)
+		}
+		if _, ok := obj["id"]; !ok {
+			t.Errorf("line %d: expected snake_case key \"id\", got keys: %v", i+1, obj)
+		}
+		if _, ok := obj["session_id"]; !ok {
+			t.Errorf("line %d: expected snake_case key \"session_id\", got keys: %v", i+1, obj)
+		}
+	}
+}
+
+func TestWriteExport_SessionFilter_FiltersCorrectly(t *testing.T) {
+	st := store.NewTestDB(t)
+	seedAuditRecord(t, st, "rec-sess-a-1", "sess-target", 1, "tool_x", "allow")
+	seedAuditRecord(t, st, "rec-sess-a-2", "sess-target", 2, "tool_y", "deny")
+	seedAuditRecord(t, st, "rec-sess-b-1", "sess-other", 1, "tool_z", "allow")
+
+	filter := store.AuditFilter{SessionID: "sess-target"}
+	var buf bytes.Buffer
+	if err := writeExport(st, filter, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+
+	// Only sess-target records must appear.
+	if !strings.Contains(out, "rec-sess-a-1") {
+		t.Errorf("expected rec-sess-a-1 in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "rec-sess-a-2") {
+		t.Errorf("expected rec-sess-a-2 in output, got:\n%s", out)
+	}
+	if strings.Contains(out, "rec-sess-b-1") {
+		t.Errorf("record from sess-other must not appear in session-filtered output, got:\n%s", out)
+	}
+
+	// Must be exactly two JSONL lines (one per sess-target record).
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 JSONL lines for session-filtered export, got %d: %q", len(lines), out)
+	}
+}
+
+func TestWriteExport_ValidJSONL_NoTrailingComma(t *testing.T) {
+	st := store.NewTestDB(t)
+	seedAuditRecord(t, st, "rec-nl-1", "sess-nl", 1, "tool_a", "allow")
+	seedAuditRecord(t, st, "rec-nl-2", "sess-nl", 2, "tool_b", "allow")
+
+	var buf bytes.Buffer
+	if err := writeExport(st, store.AuditFilter{}, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	raw := buf.String()
+
+	// JSONL must not end with a comma.
+	if strings.HasSuffix(strings.TrimRight(raw, "\n"), ",") {
+		t.Errorf("JSONL output must not end with a trailing comma, got: %q", raw)
+	}
+
+	// Every line must be individually parseable JSON.
+	for i, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+		var obj map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Errorf("line %d is not valid JSON: %v\nline: %q", i+1, err, line)
+		}
 	}
 }
