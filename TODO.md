@@ -1182,7 +1182,8 @@
 
 ---
 
-- [ ] **Task 5.2** — `internal/store`: audit log query methods
+- [x] **Task 5.2** — `internal/store`: audit log query methods
+      **Status:** Complete
       **Scope:**
   - Implement `internal/store/audit.go`:
     - `QueryAuditLog(filters AuditFilter) ([]AuditRecord, error)`.
@@ -1194,6 +1195,17 @@
   **Satisfaction check:**
   - `go test ./internal/store/...` passes.
   - No string interpolation in the query builder.
+
+  **Files:** `internal/store/audit.go` (extended), `internal/store/audit_test.go` (new)
+  **Notes:** `AuditRecord` is defined as a store-local struct (not importing `internal/audit`)
+  to avoid the circular import that already exists in this direction (audit imports store for
+  Write). The `cmd/audit` package (Task 5.3) will call `store.QueryAuditLog` directly and can
+  convert to `audit.AuditRecord` as needed for signature verification.
+  Dynamic WHERE clause uses `WHERE 1=1` + conditional `AND` appends with `?` placeholders —
+  no string interpolation of user values. `From`/`To` filters are inclusive bounds on
+  `recorded_at` (Unix nanoseconds). Results are ordered `recorded_at ASC`.
+  Tests cover: no filter, filter by each field individually, combined filters, empty result,
+  nullable field round-trip (DecisionReason + ClientTraceID), ASC ordering invariant.
 
 ---
 
