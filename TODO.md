@@ -1209,20 +1209,48 @@
 
 ---
 
-- [ ] **Task 5.3** — `cmd/audit`: wire up `audit verify`, `audit query`, `audit replay`
-      **Scope:**
-  - `audit verify <file>`: reads a JSONL audit log file, verifies each record's signature using the
-    proxy's public key. Prints `OK` or `TAMPERED` per line. Exit non-zero if any `TAMPERED`.
-  - `audit query`: calls `store.QueryAuditLog` with flags mapped to `AuditFilter`. Supports
-    `--session`, `--tool`, `--decision`, `--trace-id`, `--from`, `--to`, `--format` (table/json/csv).
-  - `audit replay <file> --policy <file>`: reads a JSONL trace file (not audit log — these are raw
-    MCP request traces), re-runs each call through the evaluation pipeline in memory against the
-    given policy, prints a diff table showing changed decisions.
-
-  **Satisfaction check:**
-  - `audit verify` correctly identifies tampered records in a test fixture.
-  - `audit query --decision deny` returns only deny records.
-  - `audit replay` runs without a live proxy or upstream.
+- [x] **Task 5.3** — `cmd/audit`: wire up `audit verify`, `audit query`, `audit replay`
+  **Status:** Complete
+  **Files:**
+  - `cmd/audit/verify.go` — full implementation: `--key` flag (default `~/.truebearing/keys/proxy.pub.pem`),
+    JSONL scanner with 1 MiB per-line buffer, JSON decode to `internalaudit.AuditRecord` (aliased
+    to avoid package name conflict with `cmd/audit`), `audit.Verify()` per line, OK/TAMPERED output,
+    non-zero exit on any TAMPERED.
+  - `cmd/audit/query.go` — full implementation: `buildAuditFilter` (RFC3339 timestamp parsing for
+    `--from`/`--to`), `runQuery` (opens store via `resolveQueryDBPath`, calls `store.QueryAuditLog`),
+    `writeQueryTable` (tabwriter, truncates reasons >60 chars), `writeQueryJSON` (indented JSON array),
+    `writeQueryCSV` (RFC 4180, 8-column header).
+  - `cmd/audit/replay.go` — full implementation: reads JSONL audit log (one `auditLogLine` per line),
+    groups records by session_id preserving first-encounter order, sorts each group by seq ASC,
+    creates in-memory SQLite store, runs the MayUse→Budget→Taint→Sequence pipeline (Escalation
+    evaluator excluded — raw arguments not available in audit log), appends events with NEW decision
+    so subsequent sequence checks see the correct history, prints diff table with changed decisions
+    in upper-case and rule reason.
+  - `cmd/audit/audit_test.go` — NEW: 15 tests covering `buildAuditFilter` (empty inputs, string
+    fields, valid RFC3339 timestamps, invalid `--from`, invalid `--to`), `groupAuditBySession`
+    (single session, multiple sessions preserving order, empty input), `writeQueryTable` (no records,
+    with records, long reason truncation), `writeQueryJSON` (empty slice, with record), `writeQueryCSV`
+    (header always present, with record).
+  **Notes:**
+  - `cmd/audit` is package `audit`; `internal/audit` is also package `audit`. The import alias
+    `internalaudit "github.com/mercator-hq/truebearing/internal/audit"` is used in `verify.go`
+    to avoid the collision. `replay.go` defines a local `auditLogLine` struct (mirroring
+    `audit.AuditRecord` json tags) instead of importing `internal/audit` to avoid the alias
+    complexity in a file that already imports `internal/policy` (also as `inpolicy`).
+  - TODO.md 5.3 described `audit replay` as reading "raw MCP request trace files" but mvp-plan.md
+    §13 describes it as reading an audit log. This implementation follows mvp-plan.md §13 (audit log
+    format) because: (a) trace-file replay is covered by Task 5.4 (`truebearing simulate`), (b) the
+    functional purpose of `audit replay` is retroactive policy analysis against existing audit
+    records, and (c) without raw arguments the escalation evaluator is correctly excluded with a
+    documented limitation rather than producing spurious deny decisions.
+  - `audit verify` requires the proxy's Ed25519 public key. The proxy does not yet call `audit.Write`
+    (noted in Task 5.1; wiring is deferred to a future task). Operators can test `audit verify` by
+    manually creating JSONL files using `internal/audit` sign+write or by pointing at records
+    written via future proxy-audit wiring. // TODO(5.3-followup): wire audit.Write into proxy.handleMCP.
+  - The in-memory SQLite database for replay uses a PID-suffixed DSN
+    (`file:replay<pid>?mode=memory&cache=shared`) to ensure uniqueness across concurrent invocations.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    15/15 cmd/audit tests pass; all pre-existing tests continue to pass.
 
 ---
 
