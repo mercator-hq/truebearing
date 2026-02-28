@@ -80,9 +80,40 @@ type ToolPolicy struct {
 	// specific tool. See the enforcement-mode hierarchy in mvp-plan.md §12.
 	EnforcementMode EnforcementMode `yaml:"enforcement_mode" json:"enforcement_mode"`
 
-	Sequence     SequencePolicy `yaml:"sequence"      json:"sequence"`
-	Taint        TaintPolicy    `yaml:"taint"         json:"taint"`
-	EscalateWhen *EscalateRule  `yaml:"escalate_when" json:"escalate_when"`
+	Sequence     SequencePolicy     `yaml:"sequence"      json:"sequence"`
+	Taint        TaintPolicy        `yaml:"taint"         json:"taint"`
+	EscalateWhen *EscalateRule      `yaml:"escalate_when" json:"escalate_when"`
+	NeverWhen    []ContentPredicate `yaml:"never_when"    json:"never_when"`
+}
+
+// ContentPredicate defines a single content-based guard on a tool argument
+// value. The predicate fires — causing a Deny — when the named argument
+// satisfies the condition. Predicates are evaluated in order; the first match
+// terminates evaluation and returns a Deny.
+//
+// Supported operators:
+//   - is_external: fires when the argument string does NOT end with Value.
+//     Value is the internal domain suffix (e.g. "@acme.com"). An empty Value
+//     makes this predicate a no-op; the lint rule L014 does not flag this but
+//     operators should set Value for the predicate to be meaningful.
+//   - contains_pattern: fires when the argument string matches the Go regexp
+//     in Value. Surrounding / delimiters (Perl/JS notation) are stripped
+//     before compilation so the pitch YAML style "/pattern/" is accepted.
+//   - equals: fires when the argument string equals Value exactly.
+//   - not_equals: fires when the argument string does not equal Value.
+type ContentPredicate struct {
+	// Argument is the key in the tool call's arguments JSON object to inspect.
+	Argument string `yaml:"argument" json:"argument"`
+
+	// Operator is the comparison to apply. See the type-level doc for supported
+	// values. An unrecognised operator is reported by lint rule L014 and causes
+	// the evaluation pipeline to fail closed (deny) at runtime.
+	Operator string `yaml:"operator" json:"operator"`
+
+	// Value is the comparand for the operator. Required for contains_pattern,
+	// equals, and not_equals. For is_external, Value is the internal domain
+	// suffix; omitting it makes the predicate a no-op.
+	Value string `yaml:"value" json:"value"`
 }
 
 // SequencePolicy defines the ordering constraints for a tool call relative to

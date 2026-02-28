@@ -70,6 +70,7 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
 		&engine.SequenceEvaluator{Store: st},
+		&engine.ContentEvaluator{},
 		&engine.EscalationEvaluator{Store: st},
 	)
 	return &Proxy{

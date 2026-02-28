@@ -1076,3 +1076,156 @@ tools:
 		})
 	}
 }
+
+// TestLint_L014 verifies that L014 fires when a never_when predicate uses an
+// unrecognised operator and does not fire for all four supported operators.
+func TestLint_L014(t *testing.T) {
+	cases := []struct {
+		name     string
+		operator string
+		wantHit  bool
+	}{
+		{
+			name:     "unknown operator triggers L014",
+			operator: "is_purple",
+			wantHit:  true,
+		},
+		{
+			name:     "empty operator triggers L014",
+			operator: "",
+			wantHit:  true,
+		},
+		{
+			name:     "is_external does not trigger L014",
+			operator: "is_external",
+			wantHit:  false,
+		},
+		{
+			name:     "contains_pattern does not trigger L014",
+			operator: "contains_pattern",
+			wantHit:  false,
+		},
+		{
+			name:     "equals does not trigger L014",
+			operator: "equals",
+			wantHit:  false,
+		},
+		{
+			name:     "not_equals does not trigger L014",
+			operator: "not_equals",
+			wantHit:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yaml := `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when:
+      - argument: recipient
+        operator: "` + tc.operator + `"
+        value: "@acme.com"
+`
+			p := mustParseBytes(t, yaml)
+			results := policy.Lint(p)
+			got := hasCode(results, "L014")
+			if got != tc.wantHit {
+				t.Errorf("hasCode(results, \"L014\") = %v, want %v; results: %v", got, tc.wantHit, results)
+			}
+		})
+	}
+}
+
+// TestLint_L015 verifies that L015 fires when a contains_pattern predicate
+// has an invalid regexp value and does not fire for valid patterns (including
+// /delimiter/ notation).
+func TestLint_L015(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		wantHit bool
+	}{
+		{
+			name:    "invalid regexp triggers L015",
+			value:   "[unclosed",
+			wantHit: true,
+		},
+		{
+			name:    "invalid regexp with delimiters triggers L015",
+			value:   "/[unclosed/",
+			wantHit: true,
+		},
+		{
+			name:    "valid plain regexp does not trigger L015",
+			value:   "secret|key|token",
+			wantHit: false,
+		},
+		{
+			name:    "valid /delimiter/ regexp does not trigger L015",
+			value:   "/secret|key|token/",
+			wantHit: false,
+		},
+		{
+			name:    "empty value (matches everything) does not trigger L015",
+			value:   "",
+			wantHit: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yaml := `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when:
+      - argument: body
+        operator: contains_pattern
+        value: "` + tc.value + `"
+`
+			p := mustParseBytes(t, yaml)
+			results := policy.Lint(p)
+			got := hasCode(results, "L015")
+			if got != tc.wantHit {
+				t.Errorf("hasCode(results, \"L015\") = %v, want %v; results: %v", got, tc.wantHit, results)
+			}
+		})
+	}
+}
+
+// TestLint_L015_NonPatternOperators verifies that L015 only fires for
+// contains_pattern and is silent for other operators regardless of Value.
+func TestLint_L015_NonPatternOperators(t *testing.T) {
+	for _, op := range []string{"equals", "not_equals", "is_external"} {
+		t.Run("operator="+op, func(t *testing.T) {
+			yaml := `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when:
+      - argument: recipient
+        operator: "` + op + `"
+        value: "[not-a-pattern-but-irrelevant]"
+`
+			p := mustParseBytes(t, yaml)
+			results := policy.Lint(p)
+			if hasCode(results, "L015") {
+				t.Errorf("operator %q incorrectly triggers L015", op)
+			}
+		})
+	}
+}

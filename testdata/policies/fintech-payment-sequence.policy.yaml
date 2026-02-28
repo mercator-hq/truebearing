@@ -16,6 +16,7 @@
 #   - taint.applies / taint.clears lifecycle
 #   - escalate_when with numeric threshold
 #   - requires_prior_n (at least one invoice must be verified)
+#   - never_when content predicates (block on argument values)
 
 version: "1"
 agent: payments-agent
@@ -61,6 +62,13 @@ tools:
       requires_prior_n:
         tool: verify_invoice
         count: 1
+
+    # Block the transfer when the memo field contains suspicious content that
+    # could indicate a prompt-injection payload or an unreviewed instruction.
+    never_when:
+      - argument: memo
+        operator: contains_pattern
+        value: "/urgent|override|ignore.+policy/"
 
     escalate_when:
       argument_path: "$.amount_usd"

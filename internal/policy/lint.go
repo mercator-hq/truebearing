@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -36,6 +37,15 @@ type LintResult struct {
 	Message string
 }
 
+// validContentOperators is the complete set of operator strings accepted in
+// never_when content predicates. Any other value triggers L014.
+var validContentOperators = map[string]bool{
+	"is_external":      true,
+	"contains_pattern": true,
+	"equals":           true,
+	"not_equals":       true,
+}
+
 // validEscalateOperators is the complete set of operator strings accepted in
 // escalate_when rules. Any other value triggers L012.
 var validEscalateOperators = map[string]bool{
@@ -67,6 +77,8 @@ func Lint(p *Policy) []LintResult {
 	results = append(results, lintL011(p)...)
 	results = append(results, lintL012(p)...)
 	results = append(results, lintL013(p)...)
+	results = append(results, lintL014(p)...)
+	results = append(results, lintL015(p)...)
 	return results
 }
 
@@ -288,6 +300,60 @@ func lintL012(p *Policy) []LintResult {
 					toolName, tp.EscalateWhen.Operator,
 				),
 			})
+		}
+	}
+	return results
+}
+
+// lintL014 reports an error when a never_when predicate uses an operator that
+// the ContentEvaluator does not recognise. An unrecognised operator causes the
+// evaluation pipeline to fail closed (deny) on every call to that tool,
+// blocking the agent permanently regardless of actual argument values.
+func lintL014(p *Policy) []LintResult {
+	var results []LintResult
+	for toolName, tp := range p.Tools {
+		for i, pred := range tp.NeverWhen {
+			if !validContentOperators[pred.Operator] {
+				results = append(results, LintResult{
+					Code:     "L014",
+					Severity: SeverityError,
+					Message: fmt.Sprintf(
+						"tool %q: never_when[%d] operator %q is not valid; supported operators: is_external, contains_pattern, equals, not_equals",
+						toolName, i, pred.Operator,
+					),
+				})
+			}
+		}
+	}
+	return results
+}
+
+// lintL015 reports an error when a never_when predicate uses contains_pattern
+// with a value that does not compile as a valid Go regexp. An invalid pattern
+// causes the ContentEvaluator to return an error at runtime, which the pipeline
+// converts to a Deny — permanently blocking the tool for every call.
+//
+// Leading and trailing / delimiters (Perl/JS notation) are stripped before
+// compilation, matching the runtime behaviour of the ContentEvaluator.
+func lintL015(p *Policy) []LintResult {
+	var results []LintResult
+	for toolName, tp := range p.Tools {
+		for i, pred := range tp.NeverWhen {
+			if pred.Operator != "contains_pattern" {
+				continue
+			}
+			pattern := strings.TrimPrefix(pred.Value, "/")
+			pattern = strings.TrimSuffix(pattern, "/")
+			if _, err := regexp.Compile(pattern); err != nil {
+				results = append(results, LintResult{
+					Code:     "L015",
+					Severity: SeverityError,
+					Message: fmt.Sprintf(
+						"tool %q: never_when[%d] contains_pattern value %q is not a valid Go regexp: %v",
+						toolName, i, pred.Value, err,
+					),
+				})
+			}
 		}
 	}
 	return results
