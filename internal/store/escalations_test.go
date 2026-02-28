@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"testing"
 
 	"github.com/mercator-hq/truebearing/internal/store"
@@ -218,5 +220,194 @@ func TestHasApprovedEscalation_NullArgumentsMatchEmptyHash(t *testing.T) {
 	}
 	if !ok {
 		t.Error("expected true for approved escalation with NULL arguments and empty-hash query; got false")
+	}
+}
+
+func TestGetEscalationStatus_NotFound(t *testing.T) {
+	st := escalationStore(t)
+
+	_, err := st.GetEscalationStatus("ghost-id")
+	if err == nil {
+		t.Fatal("GetEscalationStatus: expected error for non-existent ID, got nil")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("GetEscalationStatus: error = %v, want to wrap sql.ErrNoRows", err)
+	}
+}
+
+func TestGetEscalationStatus_ReturnsStatus(t *testing.T) {
+	st := escalationStore(t)
+
+	e := &store.Escalation{
+		ID:        "esc-status",
+		SessionID: "sess-s",
+		Seq:       1,
+		ToolName:  "tool-x",
+		Status:    "pending",
+	}
+	if err := st.CreateEscalation(e); err != nil {
+		t.Fatalf("CreateEscalation: %v", err)
+	}
+
+	status, err := st.GetEscalationStatus("esc-status")
+	if err != nil {
+		t.Fatalf("GetEscalationStatus: %v", err)
+	}
+	if status != "pending" {
+		t.Errorf("GetEscalationStatus = %q, want %q", status, "pending")
+	}
+}
+
+func TestApproveEscalation_TransitionsToApproved(t *testing.T) {
+	st := escalationStore(t)
+
+	if err := st.CreateEscalation(&store.Escalation{
+		ID: "esc-approve", SessionID: "sess-a", Seq: 1,
+		ToolName: "tool-x", Status: "pending",
+	}); err != nil {
+		t.Fatalf("CreateEscalation: %v", err)
+	}
+
+	if err := st.ApproveEscalation("esc-approve", "looks good"); err != nil {
+		t.Fatalf("ApproveEscalation: %v", err)
+	}
+
+	status, err := st.GetEscalationStatus("esc-approve")
+	if err != nil {
+		t.Fatalf("GetEscalationStatus: %v", err)
+	}
+	if status != "approved" {
+		t.Errorf("status = %q, want %q", status, "approved")
+	}
+}
+
+func TestRejectEscalation_TransitionsToRejected(t *testing.T) {
+	st := escalationStore(t)
+
+	if err := st.CreateEscalation(&store.Escalation{
+		ID: "esc-reject", SessionID: "sess-r", Seq: 1,
+		ToolName: "tool-x", Status: "pending",
+	}); err != nil {
+		t.Fatalf("CreateEscalation: %v", err)
+	}
+
+	if err := st.RejectEscalation("esc-reject", "too risky"); err != nil {
+		t.Fatalf("RejectEscalation: %v", err)
+	}
+
+	status, err := st.GetEscalationStatus("esc-reject")
+	if err != nil {
+		t.Fatalf("GetEscalationStatus: %v", err)
+	}
+	if status != "rejected" {
+		t.Errorf("status = %q, want %q", status, "rejected")
+	}
+}
+
+func TestApproveEscalation_NonExistentID(t *testing.T) {
+	st := escalationStore(t)
+
+	err := st.ApproveEscalation("no-such-id", "note")
+	if err == nil {
+		t.Fatal("ApproveEscalation: expected error for non-existent ID, got nil")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("ApproveEscalation: error = %v, want to wrap sql.ErrNoRows", err)
+	}
+}
+
+func TestRejectEscalation_NonExistentID(t *testing.T) {
+	st := escalationStore(t)
+
+	err := st.RejectEscalation("no-such-id", "reason")
+	if err == nil {
+		t.Fatal("RejectEscalation: expected error for non-existent ID, got nil")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("RejectEscalation: error = %v, want to wrap sql.ErrNoRows", err)
+	}
+}
+
+func TestApproveEscalation_AlreadyResolved(t *testing.T) {
+	st := escalationStore(t)
+
+	if err := st.CreateEscalation(&store.Escalation{
+		ID: "esc-double", SessionID: "sess-d", Seq: 1,
+		ToolName: "tool-x", Status: "pending",
+	}); err != nil {
+		t.Fatalf("CreateEscalation: %v", err)
+	}
+
+	if err := st.ApproveEscalation("esc-double", "first"); err != nil {
+		t.Fatalf("ApproveEscalation (first): %v", err)
+	}
+	if err := st.ApproveEscalation("esc-double", "second"); err == nil {
+		t.Error("ApproveEscalation (second): expected error for already-approved escalation, got nil")
+	}
+}
+
+func TestListEscalations_All(t *testing.T) {
+	st := escalationStore(t)
+
+	for _, e := range []store.Escalation{
+		{ID: "e1", SessionID: "s1", Seq: 1, ToolName: "tool-a", Status: "pending"},
+		{ID: "e2", SessionID: "s1", Seq: 2, ToolName: "tool-b", Status: "approved"},
+		{ID: "e3", SessionID: "s1", Seq: 3, ToolName: "tool-c", Status: "rejected"},
+	} {
+		ec := e
+		if err := st.CreateEscalation(&ec); err != nil {
+			t.Fatalf("CreateEscalation %q: %v", e.ID, err)
+		}
+	}
+
+	all, err := st.ListEscalations("")
+	if err != nil {
+		t.Fatalf("ListEscalations: %v", err)
+	}
+	if len(all) != 3 {
+		t.Errorf("ListEscalations (all) returned %d records, want 3", len(all))
+	}
+}
+
+func TestListEscalations_FilterByStatus(t *testing.T) {
+	st := escalationStore(t)
+
+	for _, e := range []store.Escalation{
+		{ID: "f1", SessionID: "s2", Seq: 1, ToolName: "tool-a", Status: "pending"},
+		{ID: "f2", SessionID: "s2", Seq: 2, ToolName: "tool-b", Status: "pending"},
+		{ID: "f3", SessionID: "s2", Seq: 3, ToolName: "tool-c", Status: "approved"},
+	} {
+		ec := e
+		if err := st.CreateEscalation(&ec); err != nil {
+			t.Fatalf("CreateEscalation %q: %v", e.ID, err)
+		}
+	}
+
+	pending, err := st.ListEscalations("pending")
+	if err != nil {
+		t.Fatalf("ListEscalations(pending): %v", err)
+	}
+	if len(pending) != 2 {
+		t.Errorf("ListEscalations(pending) returned %d records, want 2", len(pending))
+	}
+
+	approved, err := st.ListEscalations("approved")
+	if err != nil {
+		t.Fatalf("ListEscalations(approved): %v", err)
+	}
+	if len(approved) != 1 {
+		t.Errorf("ListEscalations(approved) returned %d records, want 1", len(approved))
+	}
+}
+
+func TestListEscalations_Empty(t *testing.T) {
+	st := escalationStore(t)
+
+	escs, err := st.ListEscalations("")
+	if err != nil {
+		t.Fatalf("ListEscalations: %v", err)
+	}
+	if len(escs) != 0 {
+		t.Errorf("ListEscalations on empty store returned %d records, want 0", len(escs))
 	}
 }

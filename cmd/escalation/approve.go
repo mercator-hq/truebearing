@@ -4,10 +4,12 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mercator-hq/truebearing/internal/escalation"
+	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // newApproveCommand returns the `escalation approve` subcommand.
-// The real implementation is added in Task 5.5.
 func newApproveCommand() *cobra.Command {
 	var note string
 
@@ -18,14 +20,24 @@ func newApproveCommand() *cobra.Command {
 from the agent will return "approved", allowing the agent to retry
 the original tool call.`,
 		Args: cobra.ExactArgs(1),
-		// TODO(5.5): remove stub and implement escalation approve.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("[not yet implemented]: escalation approve")
+			id := args[0]
+			dbPath := resolveEscalationDBPath()
+			st, err := store.Open(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database at %s: %w", dbPath, err)
+			}
+			defer func() { _ = st.Close() }()
+
+			if err := escalation.Approve(id, note, st); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Escalation %s approved.\n", id)
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&note, "note", "", "optional approval note recorded in the audit log")
+	cmd.Flags().StringVar(&note, "note", "", "optional approval note recorded with the escalation")
 
 	return cmd
 }

@@ -4,10 +4,12 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mercator-hq/truebearing/internal/escalation"
+	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // newRejectCommand returns the `escalation reject` subcommand.
-// The real implementation is added in Task 5.5.
 func newRejectCommand() *cobra.Command {
 	var reason string
 
@@ -18,14 +20,24 @@ func newRejectCommand() *cobra.Command {
 from the agent will return "rejected". The agent should then abort
 or take an alternate path.`,
 		Args: cobra.ExactArgs(1),
-		// TODO(5.5): remove stub and implement escalation reject.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("[not yet implemented]: escalation reject")
+			id := args[0]
+			dbPath := resolveEscalationDBPath()
+			st, err := store.Open(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database at %s: %w", dbPath, err)
+			}
+			defer func() { _ = st.Close() }()
+
+			if err := escalation.Reject(id, reason, st); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Escalation %s rejected.\n", id)
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&reason, "reason", "", "reason for rejection (required in production)")
+	cmd.Flags().StringVar(&reason, "reason", "", "reason for rejection")
 
 	return cmd
 }

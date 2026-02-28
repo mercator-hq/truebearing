@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 
 	"github.com/mercator-hq/truebearing/internal/engine"
+	"github.com/mercator-hq/truebearing/internal/escalation"
 	"github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/session"
 	"github.com/mercator-hq/truebearing/internal/store"
@@ -134,6 +136,27 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	params, err := mcpparse.ParseToolCallParams(mcpReq.Params)
 	if err != nil {
 		writeBadRequest(w, "malformed tool call params")
+		return
+	}
+
+	// check_escalation_status is a TrueBearing-injected virtual tool (mvp-plan.md §7.4).
+	// It is never forwarded to the upstream MCP server — TrueBearing handles it entirely
+	// by querying the escalations table and returning a synthetic JSON-RPC response.
+	// This interception happens before session load and pipeline evaluation so that an
+	// agent can poll escalation status even when the session is otherwise blocked.
+	if params.Name == "check_escalation_status" {
+		escID := gjson.GetBytes(params.Arguments, "escalation_id").String()
+		if escID == "" {
+			writeJSONRPCError(w, mcpReq.ID, "check_escalation_status requires an escalation_id argument", "virtual_tool_error")
+			return
+		}
+		status, err := escalation.GetStatus(escID, p.st)
+		if err != nil {
+			log.Printf("proxy: check_escalation_status %q: %v", escID, err)
+			writeJSONRPCError(w, mcpReq.ID, "escalation not found", "escalation_not_found")
+			return
+		}
+		writeJSONRPCEscalationStatus(w, mcpReq.ID, escID, status)
 		return
 	}
 
@@ -315,6 +338,37 @@ func writeJSONRPCEscalated(w http.ResponseWriter, id json.RawMessage, escalation
 		"status":        "escalated",
 		"escalation_id": escalationID,
 		"message":       "This action requires human approval. Call check_escalation_status with this ID to poll for a decision.",
+	})
+	type contentItem struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type result struct {
+		Content []contentItem `json:"content"`
+	}
+	type response struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  result          `json:"result"`
+	}
+	resp := response{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result{Content: []contentItem{{Type: "text", Text: string(textPayload)}}},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	body, _ := json.Marshal(resp)
+	_, _ = w.Write(body)
+}
+
+// writeJSONRPCEscalationStatus writes the synthetic JSON-RPC 2.0 success response
+// for a check_escalation_status virtual tool call. The payload contains the
+// escalation ID and its current status so the LLM can parse it as structured data.
+func writeJSONRPCEscalationStatus(w http.ResponseWriter, id json.RawMessage, escalationID, status string) {
+	textPayload, _ := json.Marshal(map[string]string{
+		"escalation_id": escalationID,
+		"status":        status,
 	})
 	type contentItem struct {
 		Type string `json:"type"`

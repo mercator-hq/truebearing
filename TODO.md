@@ -1300,7 +1300,7 @@
 
 ---
 
-- [ ] **Task 5.5** — `internal/escalation`: escalation state machine and commands
+- [x] **Task 5.5** — `internal/escalation`: escalation state machine and commands
       **Scope:**
   - Implement `internal/escalation/escalation.go`:
     - `Create(sessionID string, seq uint64, toolName string, argumentsJSON string, store *store.Store) (string, error)` — creates a pending escalation, returns ID.
@@ -1318,6 +1318,47 @@
   - `truebearing escalation list` shows pending escalations.
   - `truebearing escalation approve <id> --note "CFO approved"` transitions status.
   - `check_escalation_status` tool calls are never forwarded upstream.
+
+  **Status:** Complete
+  **Files:**
+  - `internal/store/escalations.go` — MODIFIED: added `GetEscalationStatus`, `ApproveEscalation`,
+    `RejectEscalation`, `ListEscalations`, and the unexported `resolveEscalation` helper. The
+    `resolveEscalation` helper uses a single `UPDATE … WHERE status = 'pending'` to enforce the
+    one-way transition invariant atomically; it distinguishes "not found" from "already resolved"
+    with a follow-up `GetEscalationStatus` call so callers get a meaningful error message.
+    Removed the now-stale `TODO(5.5)` comment from the file header.
+  - `internal/store/escalations_test.go` — MODIFIED: added 11 new tests covering
+    `GetEscalationStatus` (not-found, returns-status), `ApproveEscalation` (transitions,
+    non-existent, already-resolved), `RejectEscalation` (transitions, non-existent),
+    `ListEscalations` (all, filter-by-status, empty). Imports `database/sql` and `errors`
+    for `errors.Is(err, sql.ErrNoRows)` assertions.
+  - `internal/escalation/escalation.go` — NEW: thin state-machine wrappers (`Create`, `Approve`,
+    `Reject`, `GetStatus`) over the corresponding store methods. `Create` generates the UUID here
+    so the proxy has the ID before the DB write completes.
+  - `internal/escalation/escalation_test.go` — NEW: 7 black-box tests in `package escalation_test`
+    covering the full lifecycle: create→pending, approve→approved, reject→rejected, double-approve
+    error, double-reject error, approve/reject non-existent IDs (both assert `sql.ErrNoRows`).
+  - `internal/proxy/proxy.go` — MODIFIED: intercepts `check_escalation_status` tool calls in
+    `handleMCP` before the pipeline runs. Extracts `escalation_id` from arguments via `gjson`,
+    calls `escalation.GetStatus`, and returns `writeJSONRPCEscalationStatus`. The interception
+    returns before session load so the virtual tool works even on terminated or policy-changed
+    sessions. Added `writeJSONRPCEscalationStatus` response helper. Imports `gjson` and
+    `internal/escalation`.
+  - `cmd/escalation/list.go` — MODIFIED: replaced stub with real implementation; queries
+    `store.ListEscalations` and renders a tabwriter table (ID, session, tool, status, age,
+    args preview). Validates `--status` flag values.
+  - `cmd/escalation/approve.go` — MODIFIED: replaced stub; opens DB, calls `escalation.Approve`.
+  - `cmd/escalation/reject.go` — MODIFIED: replaced stub; opens DB, calls `escalation.Reject`.
+  **Notes:**
+  - The `check_escalation_status` interception happens before session fingerprint and termination
+    checks intentionally. The virtual tool is stateless with respect to session policy — it only
+    reads the escalations table. Requiring a valid session would prevent agents from polling after
+    a session is terminated, which would deadlock the escalation flow.
+  - `resolveEscalation`'s "already resolved" error message includes the current status, which
+    helps operators understand why their approve/reject command failed without exposing unrelated
+    internal detail.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
+    All 7 escalation package tests and all 11 new store tests pass.
 
 ---
 
