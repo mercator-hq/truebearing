@@ -1136,7 +1136,7 @@
 
 ---
 
-- [ ] **Task 5.1** — `internal/audit`: AuditRecord, signing, verification
+- [x] **Task 5.1** — `internal/audit`: AuditRecord, signing, verification
       **Scope:**
   - Implement `internal/audit/record.go`: `AuditRecord` struct from `mvp-plan.md §9.1`
     (including `ClientTraceID` field from §9.1a).
@@ -1154,6 +1154,31 @@
   **Satisfaction check:**
   - `go test ./internal/audit/...` passes.
   - A record with a tampered field fails `Verify`.
+  **Status:** Complete
+  **Files:**
+  - `internal/audit/record.go` — `AuditRecord` struct (new)
+  - `internal/audit/sign.go` — `Sign`, `Verify`, `canonicalJSON` (new)
+  - `internal/audit/writer.go` — `Write` (new)
+  - `internal/audit/audit_test.go` — 11 tests covering round-trip, tamper detection, canonical
+    JSON stability, wrong-key rejection, empty-signature guard, optional fields (new)
+  - `internal/store/audit.go` — `AppendAuditRecord` store write method (new)
+  - `internal/store/schema.go` — added `agent_name TEXT NOT NULL` and `decision_reason TEXT`
+    columns to `audit_log` table (modified)
+  **Notes:**
+  - `AuditRecord` lives in `internal/audit`; `internal/store` does not import `internal/audit`
+    to avoid a circular dependency. `AppendAuditRecord` accepts individual field parameters
+    rather than a struct pointer.
+  - Canonical JSON uses `map[string]any` encoded by `encoding/json`, which sorts keys
+    alphabetically. This is the Go-documented guarantee used throughout; no custom marshaller
+    was required.
+  - `ClientTraceID` and `DecisionReason` are included in the signed canonical JSON only when
+    non-empty, matching the `json:"...,omitempty"` struct tags.
+  - The `audit_log` schema was extended with `agent_name` and `decision_reason` columns that
+    were present in the plan's `AuditRecord` but absent from the Phase 1 schema draft.
+    Existing databases (e.g., from prior test runs) will need to be recreated since
+    `CREATE TABLE IF NOT EXISTS` does not add columns to existing tables.
+  - The proxy does not yet call `audit.Write` — wiring the proxy is part of Task 5.3.
+    A reminder is noted in the Task 5.3 scope.
 
 ---
 

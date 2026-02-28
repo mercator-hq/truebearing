@@ -71,14 +71,20 @@ CREATE TABLE IF NOT EXISTS session_events (
 // client_trace_id stores the W3C traceparent or vendor trace ID extracted from
 // the inbound request headers. It is nullable: requests without a trace header
 // leave this field NULL (omitted from the signed JSON payload via omitempty).
+//
+// agent_name is the "agent" JWT claim identifying who made this call.
+// decision_reason carries the human-readable policy violation explanation;
+// NULL for allow decisions.
 const createAuditLogTable = `
 CREATE TABLE IF NOT EXISTS audit_log (
     id                  TEXT PRIMARY KEY,
     session_id          TEXT NOT NULL,
     seq                 INTEGER NOT NULL,
+    agent_name          TEXT NOT NULL,
     tool_name           TEXT NOT NULL,
     arguments_sha256    TEXT NOT NULL,
     decision            TEXT NOT NULL,
+    decision_reason     TEXT,
     policy_fingerprint  TEXT NOT NULL,
     agent_jwt_sha256    TEXT NOT NULL,
     client_trace_id     TEXT,
