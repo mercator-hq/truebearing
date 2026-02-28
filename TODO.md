@@ -1466,7 +1466,7 @@
 
 ---
 
-- [ ] **Task 6.2** — Node.js SDK: `@mercator/truebearing` package on npm
+- [x] **Task 6.2** — Node.js SDK: `@mercator/truebearing` package on npm
       **Scope:**
   - Create `sdks/node/` directory.
   - Implement TypeScript `PolicyProxy` class with identical behaviour to the Python SDK.
@@ -1476,6 +1476,22 @@
   **Satisfaction check:**
   - `npm install @mercator/truebearing` installs cleanly.
   - The 2-line integration works from a TypeScript project.
+
+  **Status:** Complete
+  **Files:**
+  - `sdks/node/package.json` — npm package config; name `@mercator/truebearing`; zero runtime deps; `@types/node`, `typescript@^5.3`, `vitest@^2` as dev deps.
+  - `sdks/node/tsconfig.json` — CommonJS target ES2022, lib includes `ESNext.Disposable` for `Symbol.asyncDispose`, types: ["node"].
+  - `sdks/node/src/index.ts` — package entry point re-exporting `PolicyProxy` and `PolicyProxyOptions`.
+  - `sdks/node/src/proxy.ts` — `PolicyProxy` class with `static async create()` factory, `_waitForReady()` instance method (extracted for testability), `close()`, `Symbol.asyncDispose`, `client` getter. Module-level helpers `resolveJwt`, `findFreePort`, `startSubprocess` exported for testability.
+  - `sdks/node/tests/proxy.test.ts` — 23 Vitest tests; all pass.
+
+  **Notes:**
+  - The Node.js SDK uses `static async create()` instead of a synchronous constructor because `findFreePort` and health-check polling are inherently async. The Python SDK can do these synchronously via `urllib.request.urlopen`; Node.js cannot. The public API is therefore `await PolicyProxy.create(client, { policy: '...' })` rather than `new PolicyProxy(...)`. The 2-line integration in an async context is `const proxy = await PolicyProxy.create(new Anthropic(), { policy: './policy.yaml' })`.
+  - `Symbol.asyncDispose` is included for TC39 explicit resource management (`await using`). Requires TypeScript 5.2+ and `lib: ["ESNext.Disposable"]`.
+  - SDK detection uses duck typing on `withOptions` (same pattern as Python's try/import). No Anthropic SDK is a runtime dependency; the package stays at zero runtime deps.
+  - `vi.spyOn` cannot redefine non-configurable properties on Node.js built-in module objects (`child_process.spawn`, `os.homedir`). Tests use `vi.mock()` with `importOriginal` to replace built-in modules with mocked copies that have writable properties. This is the correct Vitest pattern for mocking Node.js internals.
+  - `_waitForReady` is an instance method (not a module-level function) so `vi.spyOn(PolicyProxy.prototype, '_waitForReady')` can suppress real HTTP calls in subprocess lifecycle tests.
+  - Built output: `dist/index.js`, `dist/index.d.ts`, `dist/proxy.js`, `dist/proxy.d.ts` plus source maps. `npm run build` (tsc) exits cleanly with no errors.
 
 ---
 
