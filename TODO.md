@@ -1507,7 +1507,7 @@
 
 ---
 
-- [ ] **Task 7.1** — `README.md`: full quick-start guide
+- [x] **Task 7.1** — `README.md`: full quick-start guide
       **Scope:**
   - Replace the "under construction" README with a complete quick-start guide.
   - A design partner engineer must be able to go from zero to a confirmed blocked tool call
@@ -1531,6 +1531,24 @@
   - A reader with no prior TrueBearing knowledge can follow it to a working blocked call.
   - `policy lint` passes on every YAML snippet shown in the README.
   - No company names.
+
+  **Status:** Complete
+  **Files:** `README.md`
+  **Notes:**
+  - Replaced 6-line "under construction" README with a complete quick-start guide covering
+    all 8 required sections from the task scope.
+  - Generic agent name: `data-agent`. Generic tools: `read_record`, `verify_record`,
+    `submit_record`. No company names anywhere in the document.
+  - Policy snippet uses `data-agent` / generic tool names. `policy lint` passes with only
+    the expected L007 (max_history not set) and L009 (shadow mode advisory) warnings — no errors.
+  - Added an onboarding path section explaining the shadow → review → block workflow, which
+    is the primary onboarding story for every design partner.
+  - Sections: What It Does, Install, Quick Start (5 steps with curl examples showing
+    allow + deny + allow-after-prerequisite), Python SDK, Node.js SDK, Key CLI Commands,
+    Onboarding Path, Policy Packs, Next Steps, Security Model.
+  - The curl deny example shows the exact JSON-RPC error structure the proxy returns.
+  - Next steps links reference `docs/policy-reference.md` and `docs/demo-script.md`
+    which will be created in Tasks 7.2 and the policy reference follow-up.
 
 ---
 
