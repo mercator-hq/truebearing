@@ -1420,7 +1420,7 @@
 
 ---
 
-- [ ] **Task 6.1** — Python SDK: `truebearing` package on PyPI
+- [x] **Task 6.1** — Python SDK: `truebearing` package on PyPI
       **Scope:**
   - Create `sdks/python/` directory.
   - Implement `PolicyProxy` class that:
@@ -1439,6 +1439,30 @@
   **Satisfaction check:**
   - `pip install truebearing` installs cleanly.
   - The 2-line integration from `mvp-plan.md §16` works against a local MCP test server.
+
+  **Status:** Complete
+  **Files:**
+  - `sdks/python/pyproject.toml` — hatchling build config; no runtime dependencies; pytest as dev dep.
+  - `sdks/python/src/truebearing/__init__.py` — package entry point exporting `PolicyProxy`.
+  - `sdks/python/src/truebearing/_proxy.py` — `PolicyProxy` class + module-level helpers
+    (`_resolve_jwt`, `_find_free_port`, `_start_subprocess`, `_configure_client`).
+  - `sdks/python/tests/test_proxy.py` — 21 tests covering session ID generation, JWT resolution
+    from all three sources, header injection into Anthropic clients, subprocess lifecycle
+    (args, output suppression, context manager exit, idempotent shutdown), and timeout.
+  **Notes:**
+  - SDK has zero runtime dependencies — stdlib only (`os`, `socket`, `subprocess`, `time`,
+    `urllib`, `uuid`, `pathlib`). anthropic/openai SDKs are detected at runtime via
+    try/import so the package stays lightweight and does not pin SDK versions.
+  - `_configure_client` uses `with_options` (Anthropic SDK ≥0.40) to return a new client
+    instance with `base_url` set to the proxy URL and `default_headers` containing the JWT
+    and session ID. Unrecognised clients are returned unchanged with a comment that the
+    caller is responsible for header injection.
+  - Module-level helpers (`_find_free_port`, `_start_subprocess`, etc.) are kept at module
+    scope (not as `PolicyProxy` methods) so tests can patch them precisely via
+    `truebearing._proxy.<helper>` without subclassing.
+  - PyPI publish step is manual (operator runs `python3.11 -m build && twine upload dist/*`);
+    automated publish via CI is a post-MVP step.
+  - All 21 tests pass with Python 3.11 (`python3.11 -m pytest`).
 
 ---
 
