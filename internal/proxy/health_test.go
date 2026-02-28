@@ -32,7 +32,7 @@ func newHealthServer(t *testing.T, st *store.Store, pol *policy.Policy, dbPath s
 	if err != nil {
 		t.Fatalf("parsing upstream URL: %v", err)
 	}
-	p := New(upstream, st, pol, dbPath)
+	p := New(upstream, st, pol, dbPath, nil)
 	srv := httptest.NewServer(p.Handler())
 	t.Cleanup(srv.Close)
 	return srv
@@ -113,7 +113,7 @@ func TestHealth_Degraded_DBUnreachable(t *testing.T) {
 	}
 
 	upstream, _ := url.Parse("http://localhost:9999")
-	p := New(upstream, st, pol, "")
+	p := New(upstream, st, pol, "", nil)
 	srv := httptest.NewServer(p.Handler())
 	t.Cleanup(srv.Close)
 

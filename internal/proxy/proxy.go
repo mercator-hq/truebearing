@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 
+	"github.com/mercator-hq/truebearing/internal/audit"
 	"github.com/mercator-hq/truebearing/internal/engine"
 	"github.com/mercator-hq/truebearing/internal/escalation"
 	"github.com/mercator-hq/truebearing/internal/policy"
@@ -32,11 +36,12 @@ const costPerToolCall = 0.001
 // session validation, and the evaluation pipeline before forwarding allowed
 // MCP requests to the upstream server.
 type Proxy struct {
-	upstream *url.URL
-	st       *store.Store
-	pol      *policy.Policy
-	rp       *httputil.ReverseProxy
-	pipeline *engine.Pipeline
+	upstream   *url.URL
+	st         *store.Store
+	pol        *policy.Policy
+	rp         *httputil.ReverseProxy
+	pipeline   *engine.Pipeline
+	signingKey ed25519.PrivateKey // nil means audit records are not signed or persisted
 	// dbPath is stored for display in GET /health responses. It is the path
 	// that was passed to store.Open() and is not used for any DB operation
 	// inside the proxy itself.
@@ -49,11 +54,15 @@ type Proxy struct {
 // (MayUse → Budget → Taint → Sequence → Escalation) is wired here so that
 // cmd/serve.go can validate the policy at startup before binding a port.
 //
+// signingKey is the Ed25519 private key used to sign audit records. Pass nil
+// if the key is unavailable — audit records will be logged but not persisted.
+// See CLAUDE.md §8 security invariant 3: key files must be 0600.
+//
 // Design: pol is accepted here rather than loaded inside the proxy so that
 // cmd/serve.go can validate the policy file at startup and fail fast before
 // binding a port. Accepting a parsed *policy.Policy keeps the constructor
 // pure and testable without requiring filesystem access.
-func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string) *Proxy {
+func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, signingKey ed25519.PrivateKey) *Proxy {
 	rp := httputil.NewSingleHostReverseProxy(upstream)
 	pipeline := engine.New(
 		&engine.MayUseEvaluator{},
@@ -63,12 +72,13 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string) 
 		&engine.EscalationEvaluator{Store: st},
 	)
 	return &Proxy{
-		upstream: upstream,
-		st:       st,
-		pol:      pol,
-		rp:       rp,
-		pipeline: pipeline,
-		dbPath:   dbPath,
+		upstream:   upstream,
+		st:         st,
+		pol:        pol,
+		rp:         rp,
+		pipeline:   pipeline,
+		signingKey: signingKey,
+		dbPath:     dbPath,
 	}
 }
 
@@ -239,6 +249,12 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write the signed audit record immediately after AppendEvent so that
+	// event.Seq is available and the record is persisted regardless of which
+	// decision branch runs below. Per pipeline invariant 1 (CLAUDE.md §6):
+	// exactly one AuditRecord is written per tool call, regardless of outcome.
+	p.writeAuditRecord(r, sessionID, claims.AgentName, params.Name, params.Arguments, event.Seq, decision)
+
 	// Persist taint state mutation if the pipeline changed sess.Tainted.
 	// Fail closed: if we cannot persist the new taint state, the session would
 	// be in an inconsistent state on the next call.
@@ -294,6 +310,58 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		escalation.Notify(esc, decision.Reason, notifyCfg)
 		writeJSONRPCEscalated(w, mcpReq.ID, escID)
+	}
+}
+
+// writeAuditRecord builds a signed audit.AuditRecord from the pipeline decision
+// and persists it via audit.Write. It is called once per tool call, immediately
+// after AppendEvent, so event.Seq is available.
+//
+// If no signing key is loaded (p.signingKey == nil), the method logs a warning
+// and returns without writing. This allows the proxy to operate without keys
+// during local development, as described in mvp-plan.md §15. Per CLAUDE.md §8,
+// the proxy never blocks a request because of an audit failure.
+func (p *Proxy) writeAuditRecord(
+	r *http.Request,
+	sessionID, agentName, toolName string,
+	arguments []byte,
+	seq uint64,
+	decision engine.Decision,
+) {
+	if p.signingKey == nil {
+		log.Printf("proxy: no signing key loaded — audit record for session %q seq %d will not be persisted", sessionID, seq)
+		return
+	}
+
+	// sha256 of raw arguments JSON per CLAUDE.md §8 security invariant 4.
+	argSum := sha256.Sum256(arguments)
+
+	// sha256 of the raw Bearer token — AuthMiddleware has already validated it,
+	// so bearerToken is guaranteed to succeed here.
+	rawJWT, _ := bearerToken(r)
+	jwtSum := sha256.Sum256([]byte(rawJWT))
+
+	rec := &audit.AuditRecord{
+		ID:                uuid.New().String(),
+		SessionID:         sessionID,
+		Seq:               seq,
+		AgentName:         agentName,
+		ToolName:          toolName,
+		ArgumentsSHA256:   hex.EncodeToString(argSum[:]),
+		Decision:          string(decision.Action),
+		DecisionReason:    decision.Reason,
+		PolicyFingerprint: p.pol.Fingerprint,
+		AgentJWTSHA256:    hex.EncodeToString(jwtSum[:]),
+		ClientTraceID:     ExtractClientTraceID(r.Header),
+		RecordedAt:        time.Now().UnixNano(),
+	}
+
+	if signErr := audit.Sign(rec, p.signingKey); signErr != nil {
+		log.Printf("proxy: signing audit record for session %q seq %d: %v", sessionID, seq, signErr)
+		return
+	}
+	if writeErr := audit.Write(rec, p.st); writeErr != nil {
+		log.Printf("proxy: writing audit record for session %q seq %d: %v", sessionID, seq, writeErr)
 	}
 }
 

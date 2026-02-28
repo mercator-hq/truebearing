@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -8,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mercator-hq/truebearing/internal/audit"
 	"github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/store"
 )
@@ -49,8 +52,10 @@ func newTestUpstream(t *testing.T, received *bool) *httptest.Server {
 }
 
 // newTestProxyServer sets up a complete proxy with a registered test agent and
-// returns the proxy httptest.Server, the upstream httptest.Server, and a valid
-// JWT for the registered "test-agent".
+// returns the proxy httptest.Server and a valid JWT for the registered "test-agent".
+// A throwaway Ed25519 signing keypair is generated for the proxy; tests that need
+// to verify audit record signatures should use the expanded setup in
+// TestProxy_ToolCall_AuditRecordWritten instead.
 func newTestProxyServer(t *testing.T, upstreamReceived *bool) (proxyServer *httptest.Server, token string) {
 	t.Helper()
 
@@ -61,15 +66,112 @@ func newTestProxyServer(t *testing.T, upstreamReceived *bool) (proxyServer *http
 	}
 
 	st := store.NewTestDB(t)
-	_, priv := registerTestAgent(t, st, "test-agent")
-	token = mintTestToken(t, priv, "test-agent", time.Hour)
+	_, agentPriv := registerTestAgent(t, st, "test-agent")
+	token = mintTestToken(t, agentPriv, "test-agent", time.Hour)
+
+	_, proxyPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generating proxy signing keypair: %v", err)
+	}
 
 	pol := parseTestPolicy(t)
-	p := New(upstreamURL, st, pol, "")
+	p := New(upstreamURL, st, pol, "", proxyPriv)
 
 	proxyServer = httptest.NewServer(p.Handler())
 	t.Cleanup(proxyServer.Close)
 	return proxyServer, token
+}
+
+// TestProxy_ToolCall_AuditRecordWritten verifies that a successful tool call
+// produces exactly one signed audit record in the store, with the correct
+// session ID, tool name, decision, and a valid Ed25519 signature.
+func TestProxy_ToolCall_AuditRecordWritten(t *testing.T) {
+	upstream := newTestUpstream(t, nil)
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parsing upstream URL: %v", err)
+	}
+
+	st := store.NewTestDB(t)
+	_, agentPriv := registerTestAgent(t, st, "test-agent")
+	token := mintTestToken(t, agentPriv, "test-agent", time.Hour)
+
+	proxyPub, proxyPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generating proxy signing keypair: %v", err)
+	}
+
+	pol := parseTestPolicy(t)
+	p := New(upstreamURL, st, pol, "", proxyPriv)
+	proxyServer := httptest.NewServer(p.Handler())
+	t.Cleanup(proxyServer.Close)
+
+	const sessionID = "sess-audit-test-123"
+	req, err := http.NewRequest(http.MethodPost, proxyServer.URL+"/mcp/v1", strings.NewReader(toolsCallBody))
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-TrueBearing-Session-ID", sessionID)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+
+	records, err := st.QueryAuditLog(store.AuditFilter{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("querying audit log: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("audit records: want 1, got %d", len(records))
+	}
+
+	r := records[0]
+	if r.SessionID != sessionID {
+		t.Errorf("SessionID: want %q, got %q", sessionID, r.SessionID)
+	}
+	if r.ToolName != "some_tool" {
+		t.Errorf("ToolName: want %q, got %q", "some_tool", r.ToolName)
+	}
+	if r.Decision != "allow" {
+		t.Errorf("Decision: want %q, got %q", "allow", r.Decision)
+	}
+	if r.AgentName != "test-agent" {
+		t.Errorf("AgentName: want %q, got %q", "test-agent", r.AgentName)
+	}
+	if r.Seq != 1 {
+		t.Errorf("Seq: want 1, got %d", r.Seq)
+	}
+	if r.Signature == "" {
+		t.Fatal("Signature must not be empty")
+	}
+
+	// Verify the Ed25519 signature against the proxy's public key.
+	auditRec := &audit.AuditRecord{
+		ID:                r.ID,
+		SessionID:         r.SessionID,
+		Seq:               r.Seq,
+		AgentName:         r.AgentName,
+		ToolName:          r.ToolName,
+		ArgumentsSHA256:   r.ArgumentsSHA256,
+		Decision:          r.Decision,
+		DecisionReason:    r.DecisionReason,
+		PolicyFingerprint: r.PolicyFingerprint,
+		AgentJWTSHA256:    r.AgentJWTSHA256,
+		ClientTraceID:     r.ClientTraceID,
+		RecordedAt:        r.RecordedAt,
+		Signature:         r.Signature,
+	}
+	if verr := audit.Verify(auditRec, proxyPub); verr != nil {
+		t.Errorf("audit.Verify: %v", verr)
+	}
 }
 
 // TestProxy_HandlerServesRequests verifies that the proxy starts and accepts

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/mercator-hq/truebearing/internal/identity"
 	inpolicy "github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/proxy"
 	"github.com/mercator-hq/truebearing/internal/store"
@@ -70,7 +71,17 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 				}
 			}()
 
-			p := proxy.New(upstreamURL, st, pol, dbPath)
+			// Load the proxy signing key used to sign audit records. If the key
+			// file is absent (e.g. first run before `agent register` has been
+			// called for the proxy), audit records are not persisted and a warning
+			// is printed. The proxy continues to operate normally without signing.
+			keyPath := proxySigningKeyPath()
+			signingKey, keyErr := identity.LoadPrivateKey(keyPath)
+			if keyErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not load proxy signing key from %s — audit records will not be signed\n  run: truebearing agent register proxy --policy %s\n", keyPath, policyPath)
+			}
+
+			p := proxy.New(upstreamURL, st, pol, dbPath, signingKey)
 
 			addr := fmt.Sprintf(":%d", port)
 			fmt.Fprintf(cmd.OutOrStdout(), "TrueBearing proxy\n")
@@ -105,4 +116,15 @@ func serveResolveDBPath() string {
 		return "truebearing.db"
 	}
 	return filepath.Join(home, ".truebearing", "truebearing.db")
+}
+
+// proxySigningKeyPath returns the default path for the proxy's Ed25519 private
+// key used to sign audit records. Per mvp-plan.md Appendix B, the proxy signing
+// key is stored at ~/.truebearing/keys/proxy.pem.
+func proxySigningKeyPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join("keys", "proxy.pem")
+	}
+	return filepath.Join(home, ".truebearing", "keys", "proxy.pem")
 }

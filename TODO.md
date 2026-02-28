@@ -1675,6 +1675,424 @@
 
 ---
 
+## Phase 8 — Gap Remediation (Pre-Demo Critical)
+
+> **Goal:** Close the gaps between what the pitch promises and what actually runs in a live demo.
+> These tasks must be completed before any design partner technical evaluation.
+> None require new architecture — they are wire-ups, missing docs, and stub completions.
+
+---
+
+- [x] **Task 8.1** — Wire `audit.Write` into `proxy.handleMCP`
+      **Status:** Complete
+      **Files:**
+  - `internal/proxy/proxy.go` — added `signingKey ed25519.PrivateKey` to `Proxy` struct;
+    updated `New()` to accept signing key; added `writeAuditRecord()` method that calls
+    `audit.Sign` then `audit.Write` after `AppendEvent` in `handleMCP`. If no signing key
+    is present, logs a warning and skips — does not block the request.
+  - `cmd/serve.go` — loads `~/.truebearing/keys/proxy.pem` at startup via
+    `identity.LoadPrivateKey`; passes key (or nil on miss) to `proxy.New`; added
+    `proxySigningKeyPath()` helper.
+  - `internal/proxy/proxy_test.go` — `newTestProxyServer` now generates a throwaway proxy
+    keypair and passes it to `New`; added `TestProxy_ToolCall_AuditRecordWritten` which
+    makes a tool call, queries `store.QueryAuditLog`, asserts exactly one record with
+    correct fields, and verifies the Ed25519 signature via `audit.Verify`.
+  - `internal/proxy/health_test.go` — updated two `New(...)` calls to pass `nil` signing key.
+  **Notes:**
+  - Audit record is written right after `AppendEvent` (before the taint-update and switch
+    blocks) so `event.Seq` is available and invariant 1 is satisfied regardless of which
+    decision branch runs.
+  - `// TODO(5.3-followup)` was already absent from `cmd/audit/verify.go`; no change needed.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all pass clean.
+
+---
+
+- [ ] **Task 8.2** — Fix `store.AuditRecord` / `audit.AuditRecord` JSON field name divergence
+      **Priority:** High — the current mismatch forces a Python one-liner workaround in `docs/demo-script.md`
+      Act 4 and makes `audit verify` unusable directly on `audit query` output.
+      **Scope:**
+  - `store.AuditRecord` has no JSON struct tags (marshals as PascalCase).
+    `audit.AuditRecord` has `json:"snake_case"` tags. They model the same record.
+  - Add `json:"snake_case"` tags to every field on `store.AuditRecord` so `audit query --format json`
+    emits snake_case JSON that `audit verify` can parse directly without conversion.
+  - Verify no other package depends on the PascalCase JSON form of `store.AuditRecord` and update
+    any that do.
+  - After the fix, `truebearing audit query --format json | truebearing audit verify` must work
+    as a clean pipeline.
+  - Update `docs/demo-script.md` Act 4 to remove the Python workaround and show the clean pipeline.
+
+  **Satisfaction check:**
+  - `truebearing audit query --format json` output is valid direct input to `truebearing audit verify`.
+  - The Python one-liner workaround in `docs/demo-script.md` is removed.
+
+---
+
+- [ ] **Task 8.3** — `truebearing audit export`: JSONL export command
+      **Priority:** High — needed for `audit verify` to operate on live proxy records cleanly.
+      **Scope:**
+  - Add `truebearing audit export` subcommand in `cmd/audit/export.go`.
+  - Flags: `--session <id>` (filter by session), `--from`, `--to` (same format as `audit query`),
+    `--output <file>` (default stdout).
+  - Reads from `store.QueryAuditLog`, marshals each record as one JSON object per line (JSONL),
+    using the snake_case JSON tags from Task 8.2.
+  - Output is directly pipe-able to `truebearing audit verify --key <pubkey>`.
+  - Write tests: export with no filter produces all records; session filter produces only that
+    session's records; output is valid JSONL (exactly one JSON object per line, no trailing comma).
+  - Update `docs/demo-script.md` Act 4 to use `audit export | audit verify` as the standard flow.
+
+  **Satisfaction check:**
+  - `truebearing audit export | truebearing audit verify` works end-to-end with all `OK`.
+  - `truebearing audit export --session <id> --output audit.jsonl` writes a usable file.
+
+---
+
+- [ ] **Task 8.4** — `docs/policy-reference.md`: full DSL reference document
+      **Priority:** High — `README.md` and `docs/demo-script.md` both link to this path.
+      A design partner engineer clicking the link during evaluation gets a dead link.
+      **Scope:**
+  - Write `docs/policy-reference.md` as the authoritative reference for every field in the policy YAML DSL.
+  - Cover every field in `internal/policy/types.go`:
+    - Top-level: `version`, `agent`, `enforcement_mode`, `may_use`, `budget`, `session`, `escalation`, `tools`.
+    - Per-tool: `enforcement_mode`, `sequence` (`only_after`, `never_after`, `requires_prior_n`),
+      `taint` (`applies`, `clears`, `label`), `escalate_when`.
+    - Budget: `max_tool_calls`, `max_cost_usd`. Session: `max_history`. Escalation: `webhook_url`.
+  - For each field: type, default value, effect on enforcement, and one concrete YAML example.
+  - Include a section for every linter rule L001–L013: what it checks, severity, how to fix.
+  - Include a section on `enforcement_mode: shadow` vs `block` and the recommended onboarding workflow.
+  - No company names anywhere. Generic agent/tool names only.
+  - Every YAML snippet in the document must pass `truebearing policy lint` with zero errors.
+
+  **Satisfaction check:**
+  - The link from `README.md` to `docs/policy-reference.md` resolves.
+  - Every YAML snippet passes `policy lint` with zero errors.
+  - A reader with no prior TrueBearing knowledge can author a valid policy using this document alone.
+
+---
+
+- [ ] **Task 8.5** — Implement `--capture-trace` in `cmd/serve.go`
+      **Priority:** Medium — currently an "not yet implemented" stub. Needed so design partners can
+      capture live traffic and then run `truebearing simulate` on it to test policy changes.
+      **Scope:**
+  - When `--capture-trace <file>` is set, write each incoming MCP tool call to the file in the
+    trace JSONL format used by `truebearing simulate`:
+    `{"session_id":"...","agent_name":"...","tool_name":"...","arguments":{...},"requested_at":"..."}`.
+  - Open the file for append (not overwrite) so a restart does not truncate prior captures.
+  - Flush each write immediately so a crash does not lose the last events.
+  - Capture both allowed and denied calls (write before the pipeline decision, not after).
+  - Remove the "not yet implemented" early return.
+  - Write a test: start a proxy with `--capture-trace`, make two tool calls, assert the trace file
+    has exactly two JSONL lines with the correct fields.
+
+  **Satisfaction check:**
+  - `truebearing serve --capture-trace ./live.trace.jsonl` writes a usable trace file.
+  - `truebearing simulate --trace ./live.trace.jsonl --policy <file>` runs successfully on it.
+
+---
+
+- [ ] **Task 8.6** — Implement `--stdio` mode in `cmd/serve.go`
+      **Priority:** Low — enables Claude Desktop and other local MCP clients that spawn the proxy
+      as a subprocess over stdio rather than TCP.
+      **Scope:**
+  - When `--stdio` is set, read MCP JSON-RPC requests from stdin (one per line) and write
+    responses to stdout. Do not bind a TCP port.
+  - Auth in stdio mode: read the JWT from `TRUEBEARING_AGENT_JWT` environment variable (no
+    `Authorization:` header is available over stdio). Absent = deny all calls.
+  - Remove the "not yet implemented" early return in `cmd/serve.go`.
+  - Write a test: pipe a valid MCP tool call JSON to stdin, assert a valid JSON-RPC response
+    on stdout.
+
+  **Satisfaction check:**
+  - `echo '{"jsonrpc":"2.0","method":"tools/call",...}' | TRUEBEARING_AGENT_JWT=<jwt> truebearing serve --stdio --policy <file>` produces a valid response.
+
+---
+
+## Phase 9 — DSL Extensions (Pitch Promise Gaps)
+
+> **Goal:** Implement DSL features explicitly shown in pitch materials that do not yet exist.
+> Each of these creates a credibility risk: an engineer who reads the pitch will try to write
+> these predicates and find they fail lint or silently do nothing.
+
+---
+
+- [ ] **Task 9.1** — Content-based predicates: `never_when:` argument matching
+      **Priority:** High — Pitch 01 shows this exact YAML syntax to developers. Engineers will copy it.
+      **Scope:**
+  - Extend the per-tool policy DSL with a `never_when:` list of content predicates:
+    ```yaml
+    send_email:
+      never_when:
+        - argument: recipient
+          operator: is_external
+        - argument: body
+          operator: contains_pattern
+          value: "/secret|key|token/"
+    ```
+  - Add `ContentPredicate` struct to `internal/policy/types.go`:
+    `Argument string`, `Operator string`, `Value string`.
+  - Supported operators: `is_external` (string does not end with a configured internal domain),
+    `contains_pattern` (value is a Go regexp applied to the argument string),
+    `equals`, `not_equals` (literal string comparison).
+  - Add a `ContentEvaluator` to `internal/engine/`:
+    - Extracts named argument from `call.Arguments` using `gjson`.
+    - Evaluates predicates in order; returns `Deny` with `RuleID: "content.<argument>.<operator>"`
+      on first match.
+  - Add lint rules: L014 — unknown operator; L015 — invalid regexp in `contains_pattern` value.
+  - Full test matrix per CLAUDE.md §5. `BenchmarkContentEvaluator` under 2ms p99.
+  - Update `testdata/policies/fintech-payment-sequence.policy.yaml` to include a `never_when`
+    predicate so the fixture demonstrates the feature end-to-end.
+
+  **Satisfaction check:**
+  - The YAML from Pitch 01 (`never_when: ... body_contains: /secret|key|token/`) passes `policy lint`.
+  - The evaluator correctly denies a call whose argument matches the predicate.
+  - `BenchmarkContentEvaluator` passes the 2ms p99 target.
+
+---
+
+- [ ] **Task 9.2** — `require_env:` predicate for environment isolation
+      **Priority:** Medium — promised in Pitch 02. DevOps policy pack README explicitly documents
+      this as a gap with an infrastructure-level workaround.
+      **Scope:**
+  - Add `require_env:` as a session-level predicate:
+    ```yaml
+    session:
+      require_env: production
+    ```
+  - Extend `identity.AgentClaims` with optional `Env string`.
+  - Add `--env <name>` flag to `cmd/agent/register.go`.
+  - Add an `EnvEvaluator` in `internal/engine/` that reads the `env` claim from the session's
+    JWT (stored at session creation) and denies with `RuleID: "env.mismatch"` if it does not
+    match the policy's `require_env` value.
+  - Add lint rule L016 — `require_env` is set but the registered agent has no `env` claim
+    (warning, not error — the agent may not be registered yet at lint time).
+  - Update `policy-packs/devops/production-guard.policy.yaml` to use `require_env: production`
+    and remove the workaround note from `policy-packs/devops/README.md`.
+  - Full test matrix. `BenchmarkEnvEvaluator` under 2ms p99.
+
+  **Satisfaction check:**
+  - An agent registered with `--env staging` is denied by a policy with `require_env: production`.
+  - The DevOps policy pack README no longer mentions the workaround.
+
+---
+
+- [ ] **Task 9.3** — `rate_limit:` per-tool call frequency enforcement
+      **Priority:** Medium — promised in Pitch 02 as loop detection. Addresses the "agent stuck
+      calling the same tool repeatedly" failure mode.
+      **Scope:**
+  - Add `rate_limit:` to per-tool policy:
+    ```yaml
+    tools:
+      search_web:
+        rate_limit:
+          max_calls: 10
+          window_seconds: 60
+    ```
+  - Add `RateLimitPolicy` struct to `internal/policy/types.go`.
+  - Add a `RateLimitEvaluator` in `internal/engine/`: reads `store.GetSessionEvents` for the
+    specific tool within the time window, denies with `RuleID: "rate_limit.<tool_name>"` if
+    count >= `max_calls`.
+  - Add lint rules: L017 — `window_seconds` ≤ 0; L018 — `max_calls` ≤ 0.
+  - Full test matrix: under rate → allow; at limit → deny; events outside window excluded;
+    other tools' events excluded. `BenchmarkRateLimitEvaluator` with 1000 events in history.
+
+  **Satisfaction check:**
+  - A tool with `rate_limit: {max_calls: 3, window_seconds: 60}` is denied on the 4th call within a minute.
+  - Events outside the time window do not count toward the limit.
+  - Benchmark under 2ms p99.
+
+---
+
+## Phase 10 — Observability (SecOps Pitch Promise)
+
+> **Goal:** Implement OpenTelemetry emission, promised explicitly in Pitch 02 to DevOps/SecOps
+> audiences. Without this, the integration story for Datadog/Grafana/Splunk customers is absent.
+
+---
+
+- [ ] **Task 10.1** — OpenTelemetry trace emission per policy decision
+      **Priority:** High for SecOps/DevOps sales. Low for developer/investor pitches.
+      **Scope:**
+  - Add `go.opentelemetry.io/otel` and `go.opentelemetry.io/otel/exporters/otlp/otlphttp` to
+    `go.mod` with a justification comment: stdlib has no OTel support; OTel SDK is CNCF-graduated.
+  - In `internal/proxy/proxy.go`, after each pipeline decision, emit an OTel span with attributes:
+    `truebearing.session_id`, `truebearing.agent_name`, `truebearing.tool_name`,
+    `truebearing.decision`, `truebearing.rule_id`, `truebearing.policy_fingerprint`,
+    `truebearing.client_trace_id`.
+  - Configure the OTLP exporter via `OTEL_EXPORTER_OTLP_ENDPOINT` env var and `OTEL_SERVICE_NAME`.
+    If absent, OTel is disabled silently — fail open on observability, fail closed on enforcement.
+  - Add `--otel-endpoint <url>` flag to `cmd/serve.go` as an alternative to the env var.
+  - Update `docs/demo-script.md` with an optional Act 7: start Jaeger, set the env var, run the
+    demo, show the per-session execution graph in the Jaeger UI.
+  - No OTel import in `internal/engine/` — OTel is a proxy concern only.
+  - Write tests: with endpoint set, spans are emitted; without endpoint, no panic, no error,
+    enforcement unchanged.
+
+  **Satisfaction check:**
+  - `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 truebearing serve` emits spans visible in Jaeger.
+  - Proxy functions identically with OTel absent.
+  - No OTel code appears in `internal/engine/`.
+
+---
+
+## Phase 11 — Distribution & Go-to-Market Operations
+
+> **Goal:** Make TrueBearing installable in one command. A design partner engineer who wants to try
+> it should not need to clone the repo and run `go build`.
+
+---
+
+- [ ] **Task 11.1** — Install script + Homebrew formula
+      **Scope:**
+  - Write `scripts/install.sh`: detect OS/arch, download the correct prebuilt binary from the
+    GitHub Releases page, place it in `/usr/local/bin/truebearing`, set `0755` permissions.
+  - Write a Homebrew formula (`Formula/truebearing.rb` or a tap repo) that builds from source
+    via `go build` with `CGO_ENABLED=0`.
+  - Update `README.md` Install section to offer: `brew install mercator-hq/tap/truebearing`
+    or `curl -sSL <install-url> | sh` as the single-command install path.
+  - Support macOS arm64, macOS amd64, Linux amd64, Linux arm64.
+
+  **Satisfaction check:**
+  - A clean macOS machine with Homebrew installs via `brew install` without cloning the repo.
+  - The install script exits non-zero on unsupported platforms rather than silently doing nothing.
+
+---
+
+- [ ] **Task 11.2** — GitHub Actions CI pipeline
+      **Scope:**
+  - Create `.github/workflows/ci.yml`:
+    - Triggers: push and pull_request to `master`.
+    - Jobs: `go build ./...`, `go vet ./...`, `gofmt -l .` (fail if output non-empty),
+      `go test ./...`, `go test -tags integration ./...`.
+    - Matrix: Go 1.22 and Go 1.23 on `ubuntu-latest`.
+  - Create `.github/workflows/release.yml`:
+    - Trigger: push of a tag matching `v*`.
+    - Build static binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`
+      with `CGO_ENABLED=0 GOOS=... GOARCH=...`.
+    - Upload as GitHub Release assets via `gh release create` or `goreleaser`.
+
+  **Satisfaction check:**
+  - A PR to master runs all checks automatically and blocks merge if any check fails.
+  - Pushing `v0.1.0` creates a GitHub Release with four downloadable binary assets.
+
+---
+
+- [ ] **Task 11.3** — PyPI automated publish via CI
+      **Scope:**
+  - Add `.github/workflows/publish-python-sdk.yml`:
+    - Trigger: push of a tag matching `sdk/python/v*`.
+    - Steps: `pip install build twine`, `python -m build`, `twine upload dist/*`.
+    - Use `PYPI_TOKEN` as a repository secret.
+  - Verify `truebearing` is available as a package name on PyPI. Reserve if not.
+  - Update `sdks/python/pyproject.toml` classifiers and homepage URL.
+
+  **Satisfaction check:**
+  - Pushing `sdk/python/v0.1.0` publishes to PyPI automatically.
+  - `pip install truebearing` installs the published package on a clean machine.
+
+---
+
+- [ ] **Task 11.4** — npm automated publish via CI
+      **Scope:**
+  - Add `.github/workflows/publish-node-sdk.yml`:
+    - Trigger: push of a tag matching `sdk/node/v*`.
+    - Steps: `npm install`, `npm run build`, `npm publish --access public`.
+    - Use `NPM_TOKEN` as a repository secret.
+  - Verify `@mercator/truebearing` is available on the npm registry.
+
+  **Satisfaction check:**
+  - Pushing `sdk/node/v0.1.0` publishes to npm automatically.
+  - `npm install @mercator/truebearing` installs the published package on a clean machine.
+
+---
+
+## Phase 12 — Enterprise Features
+
+> **Goal:** Features that will be asked for in a first technical evaluation call with an enterprise
+> design partner. None are in the original MVP spec. All are feasible without architectural change.
+
+---
+
+- [ ] **Task 12.1** — `truebearing agent revoke`: agent credential revocation
+      **Scope:**
+  - Add `cmd/agent/revoke.go` implementing `truebearing agent revoke <name>`.
+  - Add `revoked_at TIMESTAMP NULL` column to the `agents` table in `internal/store/schema.go`
+    (via a new migration step — schema migrations must be idempotent per store invariants).
+  - The proxy's JWT auth middleware must check `agents.revoked_at` is NULL after validating the
+    JWT signature. A valid JWT from a revoked agent is rejected with HTTP 401.
+  - Write tests: revoke an agent; subsequent proxy requests with that JWT return 401; other
+    agents are unaffected. Check revocation on every request, not only at session start.
+  - Update `cmd/agent/list.go` to display revocation status in the table.
+
+  **Satisfaction check:**
+  - `truebearing agent revoke my-agent` immediately blocks new and existing sessions for that agent.
+  - The auth middleware checks revocation even for sessions that started before revocation.
+
+---
+
+- [ ] **Task 12.2** — Delegation chain tracking in JWT and engine
+      **Priority:** Medium — explicitly promised in Pitch 02 as a differentiating capability over OPA.
+      **Scope:**
+  - Extend `identity.AgentClaims` with optional `ParentAgent string`.
+  - Add `--parent <agent_name>` flag to `cmd/agent/register.go`.
+  - Add a `DelegationEvaluator` in `internal/engine/`:
+    - Reads `parent_agent` from the session's JWT claims.
+    - Loads the parent agent's `allowed_tools` from the `agents` table.
+    - Denies with `RuleID: "delegation.exceeds_parent"` if the child calls a tool not in
+      the parent's allowed set (child cannot exceed parent's permissions).
+  - Store the full delegation chain (`root → parent → child`) in the audit record.
+  - Write tests: child within parent's tool set → allow; child exceeding parent → deny;
+    root agent (no parent) → always allow by this evaluator.
+
+  **Satisfaction check:**
+  - An agent registered with `--parent payments-agent` cannot call tools outside `payments-agent`'s `may_use`.
+  - The audit record reflects the full delegation chain for every call made by a child agent.
+
+---
+
+- [ ] **Task 12.3** — Policy hot-reload via SIGHUP
+      **Priority:** Medium — required for GitOps-style deployments where policy files are version
+      controlled and updated without service restarts.
+      **Scope:**
+  - On `SIGHUP`, the proxy re-parses the policy file and re-runs `policy.Lint`. If any ERROR-level
+    lint rule fires, reject the reload; the previous policy remains active and a warning is logged.
+  - If the parse and lint succeed, update the in-memory policy pointer atomically (use `sync/atomic`
+    or a `sync.RWMutex`).
+  - Existing sessions retain the policy fingerprint they were created with. The engine must be
+    able to evaluate a call using the fingerprint stored in the session, not the current live policy.
+    This may require storing the parsed policy in the session store or matching by fingerprint.
+  - Update the `/health` endpoint to reflect the current live policy fingerprint.
+  - Write a test: send SIGHUP, assert `/health` returns a new fingerprint; assert a session created
+    before the reload still runs against the old policy.
+
+  **Satisfaction check:**
+  - Policy reloads without dropping in-flight connections.
+  - A broken reload (parse error, lint error) leaves the proxy serving the previous valid policy.
+  - `/health` fingerprint updates immediately after a successful reload.
+
+---
+
+- [ ] **Task 12.4** — Structured JSON logging via `log/slog`
+      **Priority:** Medium — required for enterprise customers routing logs to Datadog/Splunk.
+      Current `log.Printf` output is not parseable by log aggregators.
+      **Scope:**
+  - Replace all `log.Printf` / `log.Fatal` calls in `internal/proxy/` with `slog` structured log calls.
+  - Each decision log line must include: `time`, `level`, `msg`, `session_id`, `agent`, `tool`,
+    `decision`, `rule_id`, `trace_id`.
+  - Argument values must NEVER appear in log output (CLAUDE.md §8 security invariant).
+    Log only `arguments_sha256` if including argument context.
+  - Add `--log-level <debug|info|warn|error>` flag to `cmd/serve.go` (default `info`).
+    At `debug` level, log the evaluator chain (which evaluators ran, in order, with their decisions).
+    At `info` level, log final decisions only.
+  - Use `log/slog` from the Go 1.21 stdlib. No new dependency.
+  - Write a test: make a tool call through the proxy, capture the log output, assert it is valid
+    JSON and contains the expected fields.
+
+  **Satisfaction check:**
+  - `truebearing serve 2>&1 | jq .` produces valid JSON on every log line.
+  - No argument values appear in any log output at any log level.
+  - No `log.Printf` calls remain in `internal/proxy/` after this task.
+
+---
+
 ## Maintenance Notes
 
 > This section is updated as decisions are made during development.
