@@ -1756,26 +1756,24 @@
 
 ---
 
-- [ ] **Task 8.4** — `docs/policy-reference.md`: full DSL reference document
-      **Priority:** High — `README.md` and `docs/demo-script.md` both link to this path.
-      A design partner engineer clicking the link during evaluation gets a dead link.
-      **Scope:**
-  - Write `docs/policy-reference.md` as the authoritative reference for every field in the policy YAML DSL.
-  - Cover every field in `internal/policy/types.go`:
-    - Top-level: `version`, `agent`, `enforcement_mode`, `may_use`, `budget`, `session`, `escalation`, `tools`.
-    - Per-tool: `enforcement_mode`, `sequence` (`only_after`, `never_after`, `requires_prior_n`),
-      `taint` (`applies`, `clears`, `label`), `escalate_when`.
-    - Budget: `max_tool_calls`, `max_cost_usd`. Session: `max_history`. Escalation: `webhook_url`.
-  - For each field: type, default value, effect on enforcement, and one concrete YAML example.
-  - Include a section for every linter rule L001–L013: what it checks, severity, how to fix.
-  - Include a section on `enforcement_mode: shadow` vs `block` and the recommended onboarding workflow.
-  - No company names anywhere. Generic agent/tool names only.
-  - Every YAML snippet in the document must pass `truebearing policy lint` with zero errors.
-
-  **Satisfaction check:**
-  - The link from `README.md` to `docs/policy-reference.md` resolves.
-  - Every YAML snippet passes `policy lint` with zero errors.
-  - A reader with no prior TrueBearing knowledge can author a valid policy using this document alone.
+- [x] **Task 8.4** — `docs/policy-reference.md`: full DSL reference document
+      **Status:** Complete
+      **Files:** `docs/policy-reference.md` (new)
+      **Notes:**
+  - Covers every field in `internal/policy/types.go`: all top-level fields, all `session`,
+    `budget`, `escalation`, and per-tool fields (`enforcement_mode`, `sequence`, `taint`,
+    `escalate_when` with all sub-fields).
+  - Each field documented with: Go type, default value, effect on evaluation, and a YAML example.
+  - All 13 linter rules (L001–L013) documented in a reference table with severity, condition,
+    and fix guidance. L013 circular-dependency detection explained with an example error message.
+  - Full shadow-mode onboarding workflow documented in five steps (lint → register → observe
+    → tune → flip to block), including the policy-fingerprint session-renewal requirement.
+  - Enforcement mode hierarchy table covering all four global × tool-level combinations.
+  - Complete worked example at §11 that passes `truebearing policy lint` with zero errors
+    (verified with the compiled binary — only L009 INFO emitted, which is not an error).
+  - No company names; generic names (`workflow-agent`, `submit_record`, `validate_record`, etc.)
+    used throughout.
+  - The dead link from `README.md` line 386 to `docs/policy-reference.md` now resolves.
 
 ---
 
