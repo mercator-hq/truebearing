@@ -1598,39 +1598,20 @@
 
 ---
 
-- [ ] **Task 7.3** — `truebearing init`: interactive policy scaffolder
-      **Scope:**
-  - Implement `cmd/init.go` with the interactive scaffolder from `mvp-plan.md §18 Addition 8`.
-  - This command is the entry point for an engineer who has never written a TrueBearing policy.
-    It must generate a valid, lint-clean policy from 5 questions — no prior DSL knowledge needed.
-  - Prompts (in order):
-    1. Agent name (e.g. `payments-agent`)
-    2. List the tools your agent uses (comma-separated)
-    3. Which tools are high-risk and must be sequence-guarded? (subset of above)
-    4. For each high-risk tool: what must happen first? (maps to `only_after`)
-    5. Set a budget: max tool calls per session, max cost in USD
-  - Generated policy uses `enforcement_mode: shadow` by default. A comment in the file
-    explains how to change it to `block` once the operator has reviewed the shadow logs.
-  - After generating, automatically run `policy lint` on the output and show the results.
-  - Print the next-steps checklist:
-    ```
-    ✓ Created truebearing.policy.yaml
-    Next steps:
-      1. truebearing agent register <agent-name> --policy truebearing.policy.yaml
-      2. truebearing serve --upstream <your-mcp-url> --policy truebearing.policy.yaml
-      3. Run your agent for a week in shadow mode
-      4. truebearing audit query --decision shadow_deny   (review what would have been blocked)
-      5. Set enforcement_mode: block in truebearing.policy.yaml when you're ready
-    ```
-  - Placing `init` in Phase 7 (not Phase 6) is deliberate: this command is part of the
-    onboarding experience, not the core engine. It should be built after everything it
-    references (policy validation, linting, agent register) is complete and stable.
-
-  **Satisfaction check:**
-  - Running `truebearing init` and answering 5 questions produces a file that passes `policy lint`
-    with zero ERRORs.
-  - Generated file uses `enforcement_mode: shadow` by default.
-  - The next-steps checklist references only commands that exist and work.
+- [x] **Task 7.3** — `truebearing init`: interactive policy scaffolder
+      **Status:** Complete
+      **Files:** `cmd/init.go`, `cmd/init_test.go`, `cmd/main.go` (registered `newInitCommand`)
+      **Notes:** Interactive scaffolder with 5 questions; all input validated before any file is
+      written. YAML is generated as a formatted string (not marshaled) to preserve inline comments
+      that make the output self-documenting for first-time operators. The generated policy is parsed
+      and linted entirely in memory before being written to disk — if L013 circular dependency or
+      any other ERROR fires, the operator sees the diagnostics and no file is produced. The
+      `--output / -o` flag (default `truebearing.policy.yaml`) was added for testability and
+      operator flexibility; this is the only deviation from the plan's scope. `check_escalation_status`
+      is injected into `may_use` if the operator did not include it, matching the proxy behaviour.
+      High-risk tools always get `enforcement_mode: block` regardless of global shadow mode.
+      Tests cover: table-driven YAML generation for 5 configurations, circular-dep abort path,
+      full end-to-end stdin simulation, parseCSV, parsePositiveInt, parsePositiveFloat.
 
 ---
 

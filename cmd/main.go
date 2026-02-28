@@ -61,6 +61,7 @@ Get started:
 	root.PersistentFlags().StringVar(&dbPath, "db", "", "SQLite database path (default: ~/.truebearing/truebearing.db)")
 
 	// Top-level commands that do not form a named group.
+	root.AddCommand(newInitCommand())
 	root.AddCommand(newServeCommand())
 	root.AddCommand(newSimulateCommand())
 
