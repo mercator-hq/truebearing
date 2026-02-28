@@ -1792,20 +1792,30 @@
 
 ---
 
-- [ ] **Task 8.6** — Implement `--stdio` mode in `cmd/serve.go`
-      **Priority:** Low — enables Claude Desktop and other local MCP clients that spawn the proxy
-      as a subprocess over stdio rather than TCP.
-      **Scope:**
-  - When `--stdio` is set, read MCP JSON-RPC requests from stdin (one per line) and write
-    responses to stdout. Do not bind a TCP port.
-  - Auth in stdio mode: read the JWT from `TRUEBEARING_AGENT_JWT` environment variable (no
-    `Authorization:` header is available over stdio). Absent = deny all calls.
-  - Remove the "not yet implemented" early return in `cmd/serve.go`.
-  - Write a test: pipe a valid MCP tool call JSON to stdin, assert a valid JSON-RPC response
-    on stdout.
-
-  **Satisfaction check:**
-  - `echo '{"jsonrpc":"2.0","method":"tools/call",...}' | TRUEBEARING_AGENT_JWT=<jwt> truebearing serve --stdio --policy <file>` produces a valid response.
+- [x] **Task 8.6** — Implement `--stdio` mode in `cmd/serve.go`
+      **Status:** Complete
+      **Files:**
+  - `internal/proxy/stdio.go` — new file: `ServeStdio` method on `Proxy`, `dispatchStdioLine`
+    helper, `stdioResponseWriter` (minimal `http.ResponseWriter` that buffers body bytes).
+    Constant `maxStdioLineBytes = 1 MiB` bounds scanner memory. All requests on a single
+    stdio connection share one auto-generated session ID.
+  - `internal/proxy/stdio_test.go` — new file: 6 tests covering allowed tool call, missing JWT
+    denial, may_use denial, non-tool forwarding, empty line skipping, and shared session ID
+    across multiple requests.
+  - `cmd/serve.go` — removed "not yet implemented" early return; added stdio branch that reads
+    `TRUEBEARING_AGENT_JWT` from the environment, prints startup banner to stderr (stdout is
+    reserved for JSON-RPC), and calls `p.ServeStdio(cmd.Context(), os.Stdin, os.Stdout, jwtToken)`.
+      **Notes:**
+  - `ServeStdio` reuses the full HTTP handler chain (`AuthMiddleware → SessionMiddleware → handleMCP`)
+    by constructing a synthetic `*http.Request` per JSON-RPC line. All auth, session, evaluation,
+    and audit logic is shared — no duplication for the stdio transport.
+  - Session ID is auto-generated at `ServeStdio` call time (one UUID per stdio connection),
+    injected as `X-TrueBearing-Session-ID` on tool calls so `SessionMiddleware` accepts them.
+  - Empty `TRUEBEARING_AGENT_JWT` leaves the `Authorization` header absent; `AuthMiddleware`
+    returns a 401-equivalent JSON error per "No JWT = deny". Warning printed to stderr at startup.
+  - Startup banner goes to stderr in stdio mode so stdout stays clean for JSON-RPC messages.
+  - `--capture-trace` works transparently: `SetTraceWriter` is called before `ServeStdio`.
+  - HTTP status codes are not transmitted over stdio; only the JSON body is written to stdout.
 
 ---
 

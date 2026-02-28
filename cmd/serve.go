@@ -36,9 +36,6 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 			if upstream == "" {
 				return fmt.Errorf("--upstream flag is required")
 			}
-			if stdio {
-				return fmt.Errorf("--stdio mode is not yet implemented")
-			}
 
 			// Parse the upstream URL early so a malformed value is caught before
 			// any port is bound or database is opened.
@@ -95,6 +92,24 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 					}
 				}()
 				p.SetTraceWriter(tw)
+			}
+
+			if stdio {
+				// In stdio mode, stdout is reserved for JSON-RPC protocol messages.
+				// Print startup diagnostics to stderr so they do not pollute the
+				// output stream consumed by the MCP client.
+				jwtToken := os.Getenv("TRUEBEARING_AGENT_JWT")
+				if jwtToken == "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: TRUEBEARING_AGENT_JWT is not set — all tool calls will be denied\n")
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "TrueBearing proxy (stdio)\n")
+				fmt.Fprintf(cmd.ErrOrStderr(), "  upstream      %s\n", upstream)
+				fmt.Fprintf(cmd.ErrOrStderr(), "  policy        %s  (%s)\n", policyPath, pol.ShortFingerprint())
+				fmt.Fprintf(cmd.ErrOrStderr(), "  db            %s\n", dbPath)
+				if captureTrace != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  capture-trace %s\n", captureTrace)
+				}
+				return p.ServeStdio(cmd.Context(), os.Stdin, os.Stdout, jwtToken)
 			}
 
 			addr := fmt.Sprintf(":%d", port)
