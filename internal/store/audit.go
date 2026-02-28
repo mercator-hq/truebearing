@@ -9,48 +9,55 @@ import (
 // audit.AuditRecord but lives in the store package to avoid a circular import:
 // internal/audit imports store for Write, so store must not import audit for
 // querying. Callers in cmd/ may convert to audit.AuditRecord as needed.
+//
+// JSON tags use snake_case so that `audit query --format json` emits the same
+// field names that `audit verify` expects when it unmarshals into
+// internal/audit.AuditRecord. Without matching tags, verify would see empty
+// fields and report every record as TAMPERED.
 type AuditRecord struct {
 	// ID is the UUID v4 primary key.
-	ID string
+	ID string `json:"id"`
 
 	// SessionID is the session the tool call was made in.
-	SessionID string
+	SessionID string `json:"session_id"`
 
 	// Seq is the session-scoped monotonically increasing sequence number.
-	Seq uint64
+	Seq uint64 `json:"seq"`
 
 	// AgentName is the "agent" JWT claim identifying the caller.
-	AgentName string
+	AgentName string `json:"agent_name"`
 
 	// ToolName is the name of the tool that was called.
-	ToolName string
+	ToolName string `json:"tool_name"`
 
 	// ArgumentsSHA256 is the hex-encoded SHA-256 of the raw arguments JSON.
-	ArgumentsSHA256 string
+	ArgumentsSHA256 string `json:"arguments_sha256"`
 
 	// Decision is the enforcement outcome: allow, deny, shadow_deny, or escalate.
-	Decision string
+	Decision string `json:"decision"`
 
 	// DecisionReason is the human-readable policy violation explanation.
-	// Empty for allow decisions (stored as NULL).
-	DecisionReason string
+	// Empty for allow decisions (stored as NULL). Omitted from JSON when empty
+	// to match the omitempty behaviour on internal/audit.AuditRecord.
+	DecisionReason string `json:"decision_reason,omitempty"`
 
 	// PolicyFingerprint is the fingerprint of the policy active at decision time.
-	PolicyFingerprint string
+	PolicyFingerprint string `json:"policy_fingerprint"`
 
 	// AgentJWTSHA256 is the hex-encoded SHA-256 of the Bearer token on the request.
-	AgentJWTSHA256 string
+	AgentJWTSHA256 string `json:"agent_jwt_sha256"`
 
 	// ClientTraceID is the W3C traceparent or vendor trace ID from the inbound headers.
-	// Empty when no trace header was present (stored as NULL).
-	ClientTraceID string
+	// Empty when no trace header was present (stored as NULL). Omitted from JSON
+	// when empty to match the omitempty behaviour on internal/audit.AuditRecord.
+	ClientTraceID string `json:"client_trace_id,omitempty"`
 
 	// RecordedAt is the wall-clock time the proxy produced this record, in Unix nanoseconds.
-	RecordedAt int64
+	RecordedAt int64 `json:"recorded_at"`
 
 	// Signature is the base64-encoded Ed25519 signature over the canonical JSON
 	// of all other fields.
-	Signature string
+	Signature string `json:"signature"`
 }
 
 // AuditFilter specifies optional query constraints for QueryAuditLog. All fields

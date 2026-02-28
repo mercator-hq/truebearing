@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -244,10 +245,11 @@ func TestWriteQueryJSON_EmptySlice(t *testing.T) {
 	if err := writeQueryJSON([]store.AuditRecord{}, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// An empty slice must produce a JSON array, not null.
-	out := strings.TrimSpace(buf.String())
-	if out != "[]" {
-		t.Errorf("expected '[]' for empty slice, got %q", out)
+	// An empty record set must produce empty JSONL output (no lines), not a
+	// JSON null or empty array. audit verify treats an empty file as "no records
+	// found", which is the correct behaviour when there is nothing to verify.
+	if buf.Len() != 0 {
+		t.Errorf("expected empty output for zero records, got %q", buf.String())
 	}
 }
 
@@ -266,6 +268,49 @@ func TestWriteQueryJSON_WithRecord(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "rec-json-001") {
 		t.Errorf("expected record ID in JSON output, got:\n%s", out)
+	}
+
+	// Output must be JSONL: exactly one non-empty line for one record.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected 1 JSONL line for 1 record, got %d lines", len(lines))
+	}
+
+	// Keys must be snake_case (from json tags on store.AuditRecord) so that
+	// audit verify can unmarshal the output into internal/audit.AuditRecord
+	// without field loss.
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[0]), &obj); err != nil {
+		t.Fatalf("JSONL line is not valid JSON: %v\nline: %q", err, lines[0])
+	}
+	for _, want := range []string{"id", "decision"} {
+		if _, ok := obj[want]; !ok {
+			t.Errorf("expected snake_case key %q in JSON output; got keys: %v", want, obj)
+		}
+	}
+}
+
+func TestWriteQueryJSON_MultipleRecords(t *testing.T) {
+	records := []store.AuditRecord{
+		{ID: "rec-a", Decision: "allow"},
+		{ID: "rec-b", Decision: "deny"},
+	}
+
+	var buf bytes.Buffer
+	if err := writeQueryJSON(records, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Each record must appear on its own line.
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 JSONL lines for 2 records, got %d", len(lines))
+	}
+	for i, line := range lines {
+		var obj map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Errorf("line %d is not valid JSON: %v", i+1, err)
+		}
 	}
 }
 

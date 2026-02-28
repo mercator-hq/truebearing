@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -18,18 +19,27 @@ func newVerifyCommand() *cobra.Command {
 	var keyPath string
 
 	cmd := &cobra.Command{
-		Use:   "verify <file>",
+		Use:   "verify [file]",
 		Short: "Verify Ed25519 signatures on every record in an audit log file",
-		Long: `Read a JSONL audit log file and verify the Ed25519 signature on each
-record using the proxy's public key. Prints OK or TAMPERED per line.
+		Long: `Read a JSONL audit log and verify the Ed25519 signature on each record
+using the proxy's public key. Prints OK or TAMPERED per line.
 Exits non-zero if any record fails verification.
+
+If no file argument is given, records are read from stdin. This allows
+the command to be used directly in a pipeline:
+
+  truebearing audit query --format json | truebearing audit verify
 
 The --key flag must point to the Ed25519 public key (.pub.pem) that was
 active when the audit records were signed. This defaults to the proxy's
 key at ~/.truebearing/keys/proxy.pub.pem.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVerify(args[0], keyPath, cmd)
+			filePath := "-"
+			if len(args) == 1 {
+				filePath = args[0]
+			}
+			return runVerify(filePath, keyPath, cmd)
 		},
 	}
 
@@ -39,22 +49,33 @@ key at ~/.truebearing/keys/proxy.pub.pem.`,
 }
 
 // runVerify implements `truebearing audit verify`. It loads the public key,
-// reads the JSONL audit log line by line, verifies each record's Ed25519
-// signature, and prints OK or TAMPERED per record. It exits non-zero if any
-// record fails verification or cannot be parsed.
+// reads the JSONL audit log line by line from filePath (or stdin when filePath
+// is "-"), verifies each record's Ed25519 signature, and prints OK or TAMPERED
+// per record. It exits non-zero if any record fails verification or cannot be
+// parsed.
 func runVerify(filePath, keyPath string, cmd *cobra.Command) error {
 	pubKey, err := identity.LoadPublicKey(keyPath)
 	if err != nil {
 		return fmt.Errorf("loading public key from %s: %w", keyPath, err)
 	}
 
-	f, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("opening audit log file %s: %w", filePath, err)
+	// Design: accept "-" (and the zero-arg case that defaults to "-") as a
+	// sentinel for stdin. This enables `audit query --format json | audit
+	// verify` without a temporary file, matching the satisfaction check in
+	// TODO.md Task 8.2.
+	var src io.Reader
+	if filePath == "-" {
+		src = os.Stdin
+	} else {
+		f, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("opening audit log file %s: %w", filePath, err)
+		}
+		defer func() { _ = f.Close() }()
+		src = f
 	}
-	defer func() { _ = f.Close() }()
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(src)
 	// Increase the per-line buffer to 1 MiB so large JSON records (long
 	// decision reasons, long trace IDs) do not overflow the default 64 KiB.
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -86,7 +107,7 @@ func runVerify(filePath, keyPath string, cmd *cobra.Command) error {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("reading audit log file %s: %w", filePath, err)
+		return fmt.Errorf("reading audit log: %w", err)
 	}
 
 	if total == 0 {

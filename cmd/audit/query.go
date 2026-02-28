@@ -148,11 +148,22 @@ func writeQueryTable(records []store.AuditRecord, w io.Writer) error {
 	return tw.Flush()
 }
 
-// writeQueryJSON serialises records as a JSON array written to w.
+// writeQueryJSON serialises records as JSONL (one JSON object per line) written
+// to w. This format is consumed directly by `truebearing audit verify`, which
+// reads line-by-line with a bufio.Scanner.
+//
+// Design: JSONL rather than a JSON array so that `audit query --format json |
+// audit verify` works as a clean shell pipeline without an intermediate
+// conversion step. json.Encoder appends a newline after each Encode call,
+// producing one record per line by construction.
 func writeQueryJSON(records []store.AuditRecord, w io.Writer) error {
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(records)
+	for _, r := range records {
+		if err := enc.Encode(r); err != nil {
+			return fmt.Errorf("encoding audit record %s as JSON: %w", r.ID, err)
+		}
+	}
+	return nil
 }
 
 // writeQueryCSV formats records as RFC 4180 CSV written to w. The header row

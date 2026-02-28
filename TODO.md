@@ -1707,23 +1707,32 @@
 
 ---
 
-- [ ] **Task 8.2** — Fix `store.AuditRecord` / `audit.AuditRecord` JSON field name divergence
-      **Priority:** High — the current mismatch forces a Python one-liner workaround in `docs/demo-script.md`
-      Act 4 and makes `audit verify` unusable directly on `audit query` output.
-      **Scope:**
-  - `store.AuditRecord` has no JSON struct tags (marshals as PascalCase).
-    `audit.AuditRecord` has `json:"snake_case"` tags. They model the same record.
-  - Add `json:"snake_case"` tags to every field on `store.AuditRecord` so `audit query --format json`
-    emits snake_case JSON that `audit verify` can parse directly without conversion.
-  - Verify no other package depends on the PascalCase JSON form of `store.AuditRecord` and update
-    any that do.
-  - After the fix, `truebearing audit query --format json | truebearing audit verify` must work
-    as a clean pipeline.
-  - Update `docs/demo-script.md` Act 4 to remove the Python workaround and show the clean pipeline.
-
-  **Satisfaction check:**
-  - `truebearing audit query --format json` output is valid direct input to `truebearing audit verify`.
-  - The Python one-liner workaround in `docs/demo-script.md` is removed.
+- [x] **Task 8.2** — Fix `store.AuditRecord` / `audit.AuditRecord` JSON field name divergence
+      **Status:** Complete
+      **Files:**
+  - `internal/store/audit.go` — added `json:"snake_case"` tags (with `omitempty` on `decision_reason`
+    and `client_trace_id`) to all fields on `store.AuditRecord`, matching the tags already on
+    `internal/audit.AuditRecord`.
+  - `cmd/audit/query.go` — changed `writeQueryJSON` from an indented JSON array to JSONL (one
+    JSON object per line via `json.Encoder.Encode`). No other callers of `writeQueryJSON` exist.
+  - `cmd/audit/verify.go` — changed `Args` from `cobra.ExactArgs(1)` to `cobra.MaximumNArgs(1)`;
+    defaults `filePath` to `"-"` (stdin) when no argument is given. Added `io.Reader` indirection
+    so the scanner reads from either `os.Stdin` or a file.
+  - `cmd/audit/audit_test.go` — updated `TestWriteQueryJSON_EmptySlice` (empty → zero bytes, not
+    `"[]"`), updated `TestWriteQueryJSON_WithRecord` to assert one JSONL line with snake_case keys,
+    added `TestWriteQueryJSON_MultipleRecords`.
+  - `docs/demo-script.md` — removed the Python one-liner from Act 4; replaced with the clean
+    `audit query --format json | audit verify` pipeline. Updated the presenter note to reflect
+    that proxy wiring is now complete (Task 8.1).
+  - `cmd/init_test.go` — gofmt-only (pre-existing formatting issue, no logic change).
+  **Notes:**
+  - No other package depended on PascalCase JSON marshaling of `store.AuditRecord`. The struct is
+    only marshaled to JSON in `writeQueryJSON`; all other usages read individual fields by name.
+  - `omitempty` on `decision_reason` and `client_trace_id` matches `audit.AuditRecord` so that
+    `canonicalJSON` in `internal/audit/sign.go` (which uses the same omitempty convention) produces
+    a signature over the same payload that `audit verify` would recompute. The signatures are valid.
+  - `audit replay` uses its own local `auditLogLine` struct (not `store.AuditRecord`) for reading
+    JSONL files — that struct already had correct snake_case tags and was unaffected by this task.
 
 ---
 

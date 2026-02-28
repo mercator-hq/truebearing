@@ -69,9 +69,9 @@ func TestGeneratePolicyYAML(t *testing.T) {
 			wantLintErrs: 0,
 		},
 		{
-			name:      "operator already included check_escalation_status",
-			agentName: "escalation-agent",
-			allTools:  []string{"do_work", "check_escalation_status"},
+			name:          "operator already included check_escalation_status",
+			agentName:     "escalation-agent",
+			allTools:      []string{"do_work", "check_escalation_status"},
 			highRiskTools: nil,
 			prerequisites: map[string][]string{},
 			maxCalls:      30,
@@ -181,13 +181,13 @@ func TestRunInit_EndToEnd(t *testing.T) {
 
 	// Pipe answers for all five questions.
 	input := strings.Join([]string{
-		"my-test-agent",          // Q1: agent name
-		"read_data, write_data",  // Q2: tools
-		"write_data",             // Q3: high-risk
-		"read_data",              // Q4: prerequisites for write_data
-		"30",                     // Q5: max tool calls
-		"3.50",                   // Q5: max cost
-		"",                       // trailing newline
+		"my-test-agent",         // Q1: agent name
+		"read_data, write_data", // Q2: tools
+		"write_data",            // Q3: high-risk
+		"read_data",             // Q4: prerequisites for write_data
+		"30",                    // Q5: max tool calls
+		"3.50",                  // Q5: max cost
+		"",                      // trailing newline
 	}, "\n")
 
 	oldStdin := os.Stdin

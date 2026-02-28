@@ -315,25 +315,18 @@ RECORDED_AT           SESSION     SEQ  AGENT           TOOL                    D
 2026-02-28T14:05:00Z  sess-demo     1  payments-agent  execute_wire_transfer   deny      sequence.only_after: "verify_invoice" has not b...
 ```
 
-Now show that every audit record is signed and verifiable. Export to JSONL and verify signatures:
+Now show that every audit record is signed and verifiable. Pipe the audit log directly into the verifier:
 
 ```sh
-# Export the audit log as signed JSONL records (one per line)
-./truebearing audit query --format json | python3 -c "
-import json, sys
-for rec in json.load(sys.stdin):
-    print(json.dumps(rec))
-" > /tmp/demo-audit.jsonl
-
-./truebearing audit verify /tmp/demo-audit.jsonl
+# audit query --format json emits JSONL (one signed record per line).
+# audit verify reads JSONL from stdin when no file argument is given.
+./truebearing audit query --format json | ./truebearing audit verify
 ```
 
-> **Presenter note:** The `audit verify` step requires the proxy to be writing signed records to
-> the database. This plumbing is in progress; if the log shows "no records found in file", the
-> narrative still lands: *"Every record the proxy writes is signed. Here is the command an auditor
-> runs to verify the full log is intact."* Then show the command and explain what OK vs TAMPERED
-> means. The cryptographic design is what the audience is evaluating, not whether the DB row exists
-> in the demo environment.
+> **Presenter note:** This pipeline works end-to-end now that `audit.Sign` and `audit.Write` are
+> wired into the proxy handler (Task 8.1). If the database is empty (fresh demo environment with
+> no tool calls yet), `verify` will print "(no records found in file)". In that case, run a few
+> tool calls through the proxy first, then re-run the pipeline.
 
 **Expected output (once proxy audit wiring is complete):**
 
