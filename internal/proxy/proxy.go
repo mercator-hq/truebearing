@@ -36,12 +36,13 @@ const costPerToolCall = 0.001
 // session validation, and the evaluation pipeline before forwarding allowed
 // MCP requests to the upstream server.
 type Proxy struct {
-	upstream   *url.URL
-	st         *store.Store
-	pol        *policy.Policy
-	rp         *httputil.ReverseProxy
-	pipeline   *engine.Pipeline
-	signingKey ed25519.PrivateKey // nil means audit records are not signed or persisted
+	upstream    *url.URL
+	st          *store.Store
+	pol         *policy.Policy
+	rp          *httputil.ReverseProxy
+	pipeline    *engine.Pipeline
+	signingKey  ed25519.PrivateKey // nil means audit records are not signed or persisted
+	traceWriter *TraceWriter       // nil means trace capture is disabled
 	// dbPath is stored for display in GET /health responses. It is the path
 	// that was passed to store.Open() and is not used for any DB operation
 	// inside the proxy itself.
@@ -105,6 +106,14 @@ func (p *Proxy) Handler() http.Handler {
 // such as the health endpoint use this to access the policy fingerprint.
 func (p *Proxy) Policy() *policy.Policy {
 	return p.pol
+}
+
+// SetTraceWriter configures a TraceWriter for this proxy. When set, every
+// incoming MCP tool call is appended to the trace file before the evaluation
+// pipeline runs, so both allowed and denied calls are captured. Pass nil to
+// disable trace capture (the default after New).
+func (p *Proxy) SetTraceWriter(tw *TraceWriter) {
+	p.traceWriter = tw
 }
 
 // handleMCP is the inner handler reached after auth and session middleware pass.
@@ -175,6 +184,22 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// AuthMiddleware guarantees claims are in context for all authenticated requests.
 	claims, _ := AgentClaimsFromContext(r.Context())
 
+	// Record arrival time before any DB operations so the timestamp in both
+	// the trace file and the ToolCall struct reflects the actual request time.
+	requestedAt := time.Now()
+
+	// Capture the tool call to the trace file before the pipeline decision so
+	// that both allowed and denied calls appear in the trace. The virtual
+	// check_escalation_status tool is excluded — it is handled above and is
+	// not replayed by truebearing simulate.
+	p.writeTraceEntry(TraceEntry{
+		SessionID:   sessionID,
+		AgentName:   claims.AgentName,
+		ToolName:    params.Name,
+		Arguments:   params.Arguments,
+		RequestedAt: requestedAt.Format(time.RFC3339),
+	})
+
 	// Load or create the session. Per mvp-plan.md §7.1a, session creation is
 	// implicit on the first tools/call for a given session ID — no explicit
 	// "start session" call is required from the agent.
@@ -215,13 +240,14 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 
 	// Build the engine's ToolCall representation. Arguments is kept as raw
 	// JSON so evaluators can use gjson to extract specific paths without a
-	// full unmarshal on every call.
+	// full unmarshal on every call. requestedAt was captured before the DB
+	// lookups above so the timestamp is consistent with the trace entry.
 	call := &engine.ToolCall{
 		SessionID:   sessionID,
 		AgentName:   claims.AgentName,
 		ToolName:    params.Name,
 		Arguments:   params.Arguments,
-		RequestedAt: time.Now(),
+		RequestedAt: requestedAt,
 	}
 
 	// Capture taint state before the pipeline so we can detect mutations.
@@ -466,6 +492,18 @@ func writeJSONRPCEscalationStatus(w http.ResponseWriter, id json.RawMessage, esc
 	w.WriteHeader(http.StatusOK)
 	body, _ := json.Marshal(resp)
 	_, _ = w.Write(body)
+}
+
+// writeTraceEntry captures a tool call to the trace file if a TraceWriter is
+// configured. Errors are logged but do not block request processing — trace
+// capture is advisory and must not affect the proxy's correctness or latency.
+func (p *Proxy) writeTraceEntry(e TraceEntry) {
+	if p.traceWriter == nil {
+		return
+	}
+	if err := p.traceWriter.WriteEntry(e); err != nil {
+		log.Printf("proxy: trace capture for tool %q: %v", e.ToolName, err)
+	}
 }
 
 // writeConflict writes the 409 Conflict response for tool calls that arrive on

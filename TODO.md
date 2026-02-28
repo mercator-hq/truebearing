@@ -1777,23 +1777,18 @@
 
 ---
 
-- [ ] **Task 8.5** — Implement `--capture-trace` in `cmd/serve.go`
-      **Priority:** Medium — currently an "not yet implemented" stub. Needed so design partners can
-      capture live traffic and then run `truebearing simulate` on it to test policy changes.
-      **Scope:**
-  - When `--capture-trace <file>` is set, write each incoming MCP tool call to the file in the
-    trace JSONL format used by `truebearing simulate`:
-    `{"session_id":"...","agent_name":"...","tool_name":"...","arguments":{...},"requested_at":"..."}`.
-  - Open the file for append (not overwrite) so a restart does not truncate prior captures.
-  - Flush each write immediately so a crash does not lose the last events.
-  - Capture both allowed and denied calls (write before the pipeline decision, not after).
-  - Remove the "not yet implemented" early return.
-  - Write a test: start a proxy with `--capture-trace`, make two tool calls, assert the trace file
-    has exactly two JSONL lines with the correct fields.
-
-  **Satisfaction check:**
-  - `truebearing serve --capture-trace ./live.trace.jsonl` writes a usable trace file.
-  - `truebearing simulate --trace ./live.trace.jsonl --policy <file>` runs successfully on it.
+- [x] **Task 8.5** — Implement `--capture-trace` in `cmd/serve.go`
+      **Status:** Complete
+      **Files:**
+  - `internal/proxy/trace.go` — new file: `TraceEntry` struct, `TraceWriter` (append-mode JSONL writer, mutex-protected, 0600 perms), `NewTraceWriter`, `WriteEntry`, `Close`.
+  - `internal/proxy/proxy.go` — added `traceWriter *TraceWriter` field, `SetTraceWriter` method, `writeTraceEntry` helper. `handleMCP` now captures `requestedAt := time.Now()` before DB operations and calls `p.writeTraceEntry(...)` immediately after extracting session/agent context, before the pipeline runs. `time.Now()` reused in `ToolCall` struct.
+  - `internal/proxy/proxy_test.go` — added `TestProxy_CaptureTrace_WritesEntries`: creates a temp trace file, makes 2 tool calls through a live test proxy, asserts exactly 2 JSONL lines with correct `session_id`, `agent_name`, `tool_name`, and non-empty `requested_at`.
+  - `cmd/serve.go` — removed "not yet implemented" warning; added `NewTraceWriter` call + `SetTraceWriter` wiring + deferred `Close`; prints `capture-trace` path in startup banner.
+      **Notes:**
+  - `check_escalation_status` is intentionally excluded from trace capture — it is a TrueBearing-internal virtual tool and is not replayed by `truebearing simulate`.
+  - The TraceWriter uses `os.OpenFile(O_CREATE|O_APPEND|O_WRONLY, 0600)` — no userspace buffering. After each `Write` syscall the data is in the kernel buffer; goroutine panics and OOM kills cannot lose the last entry. `fsync` on every write was not added (advisory trace file, not authoritative audit log).
+  - Both allowed and denied calls are captured (write happens before `p.pipeline.Evaluate`). Terminated-session and policy-fingerprint-conflict calls are also captured because the trace write precedes those checks.
+  - All tests pass; `go build ./...`, `go vet ./...`, `gofmt -l .` all clean.
 
 ---
 

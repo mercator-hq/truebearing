@@ -39,9 +39,6 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 			if stdio {
 				return fmt.Errorf("--stdio mode is not yet implemented")
 			}
-			if captureTrace != "" {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: --capture-trace is not yet implemented; flag ignored\n")
-			}
 
 			// Parse the upstream URL early so a malformed value is caught before
 			// any port is bound or database is opened.
@@ -83,12 +80,32 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 
 			p := proxy.New(upstreamURL, st, pol, dbPath, signingKey)
 
+			// Open the trace capture file if --capture-trace was set. The file is
+			// opened in append mode so a proxy restart does not truncate prior
+			// captures from the same session. The writer is closed on return so
+			// the OS flushes any remaining kernel buffers.
+			if captureTrace != "" {
+				tw, twErr := proxy.NewTraceWriter(captureTrace)
+				if twErr != nil {
+					return fmt.Errorf("opening capture-trace file %s: %w", captureTrace, twErr)
+				}
+				defer func() {
+					if cerr := tw.Close(); cerr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: closing trace file: %v\n", cerr)
+					}
+				}()
+				p.SetTraceWriter(tw)
+			}
+
 			addr := fmt.Sprintf(":%d", port)
 			fmt.Fprintf(cmd.OutOrStdout(), "TrueBearing proxy\n")
 			fmt.Fprintf(cmd.OutOrStdout(), "  listening on  %s\n", addr)
 			fmt.Fprintf(cmd.OutOrStdout(), "  upstream      %s\n", upstream)
 			fmt.Fprintf(cmd.OutOrStdout(), "  policy        %s  (%s)\n", policyPath, pol.ShortFingerprint())
 			fmt.Fprintf(cmd.OutOrStdout(), "  db            %s\n", dbPath)
+			if captureTrace != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "  capture-trace %s\n", captureTrace)
+			}
 
 			if err := http.ListenAndServe(addr, p.Handler()); err != nil {
 				return fmt.Errorf("proxy server: %w", err)

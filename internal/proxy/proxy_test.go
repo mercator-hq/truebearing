@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -303,5 +306,129 @@ func TestProxy_ToolCall_ValidAuth_ForwardedUpstream(t *testing.T) {
 	}
 	if !upstreamReceived {
 		t.Error("upstream did not receive the forwarded tool call")
+	}
+}
+
+// TestProxy_CaptureTrace_WritesEntries verifies that --capture-trace writes
+// exactly one JSONL line per tool call, with the correct session_id, agent_name,
+// tool_name, and a non-empty requested_at. Both calls share the same session ID
+// to confirm entries accumulate in append order.
+func TestProxy_CaptureTrace_WritesEntries(t *testing.T) {
+	var upstreamReceived int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamReceived++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"content":[{"type":"text","text":"ok"}]}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parsing upstream URL: %v", err)
+	}
+
+	// Create a temporary file for trace output. We close it immediately so
+	// the TraceWriter can open it in append mode without a second file handle.
+	traceFile, err := os.CreateTemp(t.TempDir(), "trace-*.jsonl")
+	if err != nil {
+		t.Fatalf("creating temp trace file: %v", err)
+	}
+	tracePath := traceFile.Name()
+	if err := traceFile.Close(); err != nil {
+		t.Fatalf("closing temp file before TraceWriter: %v", err)
+	}
+
+	tw, err := NewTraceWriter(tracePath)
+	if err != nil {
+		t.Fatalf("NewTraceWriter: %v", err)
+	}
+	t.Cleanup(func() { _ = tw.Close() })
+
+	st := store.NewTestDB(t)
+	_, agentPriv := registerTestAgent(t, st, "test-agent")
+	token := mintTestToken(t, agentPriv, "test-agent", time.Hour)
+
+	_, proxyPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generating proxy signing keypair: %v", err)
+	}
+
+	pol := parseTestPolicy(t)
+	p := New(upstreamURL, st, pol, "", proxyPriv)
+	p.SetTraceWriter(tw)
+
+	proxyServer := httptest.NewServer(p.Handler())
+	t.Cleanup(proxyServer.Close)
+
+	const sessionID = "sess-trace-capture-001"
+
+	// Make two tool calls on the same session.
+	for i := 0; i < 2; i++ {
+		req, err := http.NewRequest(http.MethodPost, proxyServer.URL+"/mcp/v1", strings.NewReader(toolsCallBody))
+		if err != nil {
+			t.Fatalf("building request %d: %v", i+1, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-TrueBearing-Session-ID", sessionID)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("making request %d: %v", i+1, err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	// Close the TraceWriter so the OS closes the file descriptor before we
+	// read back the contents.
+	if err := tw.Close(); err != nil {
+		t.Fatalf("closing TraceWriter: %v", err)
+	}
+
+	// Read and validate the trace file.
+	f, err := os.Open(tracePath)
+	if err != nil {
+		t.Fatalf("opening trace file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var entries []TraceEntry
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		var e TraceEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("parsing trace line %q: %v", line, err)
+		}
+		entries = append(entries, e)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("reading trace file: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("trace entries: want 2, got %d", len(entries))
+	}
+
+	for i, e := range entries {
+		if e.SessionID != sessionID {
+			t.Errorf("entry %d SessionID: want %q, got %q", i+1, sessionID, e.SessionID)
+		}
+		if e.AgentName != "test-agent" {
+			t.Errorf("entry %d AgentName: want %q, got %q", i+1, "test-agent", e.AgentName)
+		}
+		if e.ToolName != "some_tool" {
+			t.Errorf("entry %d ToolName: want %q, got %q", i+1, "some_tool", e.ToolName)
+		}
+		if e.RequestedAt == "" {
+			t.Errorf("entry %d RequestedAt must not be empty", i+1)
+		}
+		if len(e.Arguments) == 0 {
+			t.Errorf("entry %d Arguments must not be empty", i+1)
+		}
 	}
 }
