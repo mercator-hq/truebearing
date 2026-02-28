@@ -1621,28 +1621,57 @@
 
 ---
 
-- [ ] **Task P.1** — `policy-packs/fintech/`: fintech starter pack
+- [x] **Task P.1** — `policy-packs/fintech/`: fintech starter pack
       **Scope:**
   - `policy-packs/fintech/payments-safety.policy.yaml` — sequential approval guard pattern for
     payment workflows, with inline comments explaining each rule and the risk it mitigates.
   - `policy-packs/fintech/README.md` — when to use each rule, what risks it mitigates.
   - All files must pass `policy lint` with zero ERRORs.
 
+  **Status:** Complete
+  **Files:**
+  - `policy-packs/fintech/payments-safety.policy.yaml`
+  - `policy-packs/fintech/README.md`
+  **Notes:** Policy demonstrates all major DSL features: only_after, never_after, requires_prior_n,
+  taint.applies, taint.clears, escalate_when, tool-level enforcement_mode: block override. Starts in
+  shadow mode; README documents the 1-week shadow → block onboarding path. Passes `policy lint` with
+  zero ERRORs (L008 webhook warning and L009 shadow-mode info are expected for a starter template).
+
 ---
 
-- [ ] **Task P.2** — `policy-packs/healthcare/`: healthcare starter pack
+- [x] **Task P.2** — `policy-packs/healthcare/`: healthcare starter pack
       **Scope:**
   - `policy-packs/healthcare/hipaa-phi-guard.policy.yaml` — taint on PHI access,
     block exfiltration tools until compliance scan runs.
   - `policy-packs/healthcare/README.md`.
 
+  **Status:** Complete
+  **Files:**
+  - `policy-packs/healthcare/hipaa-phi-guard.policy.yaml`
+  - `policy-packs/healthcare/README.md`
+  **Notes:** Uses enforcement_mode: block at global level (unlike fintech which uses shadow) because
+  PHI disclosure is not safe to observe-and-allow. Guards both submit_claim and export_report with
+  never_after: [read_phi], demonstrating the multi-tool exfiltration block pattern. README includes
+  a note that this policy is one technical control and does not replace a formal HIPAA compliance
+  programme. Passes `policy lint` with zero ERRORs.
+
 ---
 
-- [ ] **Task P.3** — `policy-packs/devops/`: DevOps starter pack
+- [x] **Task P.3** — `policy-packs/devops/`: DevOps starter pack
       **Scope:**
   - `policy-packs/devops/production-guard.policy.yaml` — environment isolation,
     sequence guards on deploy workflows.
   - `policy-packs/devops/README.md`.
+
+  **Status:** Complete
+  **Files:**
+  - `policy-packs/devops/production-guard.policy.yaml`
+  - `policy-packs/devops/README.md`
+  **Notes:** Environment isolation via `require_env:` is not yet in the DSL (post-MVP feature, listed
+  in MEMORY.md deferred items). The policy instead uses sequence guards, force-push taint isolation,
+  and escalation-on-every-production-deploy (escalate_when with == "production"). README explicitly
+  documents the `require_env:` gap and provides the interim infrastructure-level workaround (separate
+  proxy instances, separate JWTs per environment). Passes `policy lint` with zero ERRORs.
 
 ---
 
