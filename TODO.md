@@ -1254,7 +1254,7 @@
 
 ---
 
-- [ ] **Task 5.4** — `truebearing simulate`
+- [x] **Task 5.4** — `truebearing simulate`
       **Scope:**
   - Implement `cmd/simulate.go` with the full simulation engine from `mvp-plan.md §9.2`.
   - Reads a `--trace` JSONL file of raw MCP tool call requests.
@@ -1270,6 +1270,33 @@
   - `truebearing simulate --trace testdata/traces/payment-sequence-violation.trace.jsonl
 --policy testdata/policies/fintech-payment-sequence.policy.yaml` prints the diff table correctly.
   - The `execute_payment` call shows as `DENY` (missing manager_approval).
+
+  **Status:** Complete
+  **Files:**
+  - `cmd/simulate.go` — full implementation replacing the prior stub
+  - `cmd/simulate_test.go` — NEW: 13 tests covering `groupTraceBySession` (empty, single
+    session, multi-session order), `parseTraceFile` (valid, empty-line skip, invalid JSON,
+    missing tool_name, file-not-found), `mergeResults` (no-change, changed), `printSimulateTable`
+    (empty results, no-diff mode, diff mode with upper-case DENY and ◄── marker, long-reason
+    truncation), `parseRFC3339OrNow` (valid, empty, invalid), and an integration test against
+    the canonical fixture.
+  - `testdata/traces/payment-sequence-violation.trace.jsonl` — NEW: 3-entry trace with
+    read_invoice → verify_invoice → execute_wire_transfer (amount_usd: 500) where the
+    third call is missing manager_approval.
+  **Notes:**
+  - Trace file format: one JSON object per line with fields `session_id`, `agent_name`,
+    `tool_name`, `arguments` (raw JSON object), `requested_at` (RFC3339, optional).
+    This is distinct from the audit log format (which has only SHA-256 of arguments).
+  - Unlike `audit replay`, `simulate` includes the EscalationEvaluator because raw
+    arguments are available — escalate_when conditions can be evaluated correctly.
+  - The in-memory SQLite DSN uses `file:simulate_{new|old}_{pid}?mode=memory&cache=shared`
+    so that old-policy and new-policy evaluations in the same process use separate databases.
+  - `execute_wire_transfer` in `fintech-payment-sequence.policy.yaml` has tool-level
+    `enforcement_mode: block`, so the DENY is not downgraded to shadow_deny even though
+    the global mode is shadow. The integration test asserts "1 deny" in the summary.
+  - Session counters (ToolCallCount, EstimatedCostUSD) are updated in memory after each
+    Allow/ShadowDeny decision, keeping BudgetEvaluator behaviour consistent with the proxy.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 
