@@ -8,6 +8,40 @@ import (
 	"github.com/mercator-hq/truebearing/internal/session"
 )
 
+// SessionRow is the full database representation of a session, including
+// timestamps that are not needed by the evaluation pipeline but are required
+// for CLI display commands such as `session list`. It is distinct from
+// session.Session, which is the leaner evaluation-pipeline struct.
+type SessionRow struct {
+	// ID is the unique session identifier.
+	ID string
+
+	// AgentName is the registered name of the agent that owns this session.
+	AgentName string
+
+	// PolicyFingerprint is the SHA-256 fingerprint of the policy bound at
+	// session creation time.
+	PolicyFingerprint string
+
+	// Tainted is true if the session has been tainted and not yet cleared.
+	Tainted bool
+
+	// ToolCallCount is the total number of tool calls recorded.
+	ToolCallCount int
+
+	// EstimatedCostUSD is the accumulated estimated cost in US dollars.
+	EstimatedCostUSD float64
+
+	// Terminated is true if the session was hard-terminated by an operator.
+	Terminated bool
+
+	// CreatedAt is the session creation timestamp in unix nanoseconds.
+	CreatedAt int64
+
+	// LastSeenAt is the timestamp of the most recent activity in unix nanoseconds.
+	LastSeenAt int64
+}
+
 // CreateSession inserts a new session row with the given ID, agent name, and policy
 // fingerprint. created_at and last_seen_at are set to now. Returns an error if a
 // session with the same ID already exists.
@@ -90,6 +124,50 @@ func (s *Store) IncrementSessionCounters(id string, costDelta float64) error {
 		return fmt.Errorf("incrementing counters for session %q: %w", id, sql.ErrNoRows)
 	}
 	return nil
+}
+
+// ListSessions returns all non-terminated sessions ordered by created_at DESC
+// (most recent first). It returns a full SessionRow for each session, including
+// timestamps needed by the `session list` CLI command.
+//
+// Design: terminated sessions are excluded here because the CLI command is a
+// monitoring view of active sessions. Operators who need to see terminated
+// sessions can query the database directly or filter via a future --all flag.
+func (s *Store) ListSessions() ([]SessionRow, error) {
+	const query = `
+		SELECT id, agent_name, policy_fingerprint, tainted, tool_call_count, estimated_cost_usd, terminated, created_at, last_seen_at
+		FROM sessions
+		WHERE terminated = 0
+		ORDER BY created_at DESC`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []SessionRow
+	for rows.Next() {
+		var r SessionRow
+		var tainted, terminated int
+		if err := rows.Scan(
+			&r.ID, &r.AgentName, &r.PolicyFingerprint,
+			&tainted, &r.ToolCallCount, &r.EstimatedCostUSD,
+			&terminated, &r.CreatedAt, &r.LastSeenAt,
+		); err != nil {
+			return nil, fmt.Errorf("scanning session row: %w", err)
+		}
+		r.Tainted = tainted != 0
+		r.Terminated = terminated != 0
+		sessions = append(sessions, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating session rows: %w", err)
+	}
+	if sessions == nil {
+		sessions = []SessionRow{}
+	}
+	return sessions, nil
 }
 
 // TerminateSession marks the given session as hard-terminated and refreshes last_seen_at.

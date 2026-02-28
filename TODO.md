@@ -1384,7 +1384,7 @@
 
 ---
 
-- [ ] **Task 5.6** — `cmd/session`: wire up session commands
+- [x] **Task 5.6** — `cmd/session`: wire up session commands
       **Scope:**
   - `session list`: queries all non-terminated sessions from the store. Prints table with ID, agent,
     policy fingerprint (short), tainted (yes/no), call count/max, cost/budget, age.
@@ -1393,9 +1393,21 @@
     return `410 Gone`.
   - Implement the `410 Gone` check in the proxy: after loading a session, check `session.Terminated`.
 
-  **Satisfaction check:**
-  - All three commands work against a live database.
-  - Terminated session tool calls return `410` with a clear message.
+  **Status:** Complete
+  **Files:**
+  - `internal/store/sessions.go` — MODIFIED: Added `SessionRow` struct and `ListSessions()` method.
+  - `internal/store/sessions_test.go` — MODIFIED: Added `TestListSessions` (4 table-driven cases) and `TestListSessions_TimestampsPopulated`.
+  - `cmd/session/list.go` — MODIFIED: Replaced stub with full implementation using `store.ListSessions`.
+  - `cmd/session/inspect.go` — MODIFIED: Replaced stub with full implementation using `store.GetSession` and `store.GetSessionEvents`.
+  - `cmd/session/terminate.go` — MODIFIED: Replaced stub with full implementation using `store.TerminateSession`.
+
+  **Notes:**
+  - The 410 Gone check was already implemented in `internal/proxy/proxy.go` in a prior task. No proxy change was needed.
+  - `SessionRow` is a separate struct from `session.Session` — it includes `CreatedAt` and `LastSeenAt` timestamps needed for age display, which are not needed in the evaluation pipeline. This avoids polluting the lean pipeline struct with display-only fields.
+  - `session list` shows the first 8 characters of session ID and policy fingerprint for readability; full values are available via `session inspect`.
+  - `session inspect` prints a session header (ID, agent, policy fingerprint, taint, terminated status) followed by the full event table (SEQ, TOOL, DECISION, RULE, TIME).
+  - `resolveSessionDBPath()` lives in `cmd/session/list.go` and is accessible to `inspect.go` and `terminate.go` within the same package.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
 
 ---
 

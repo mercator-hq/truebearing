@@ -231,3 +231,105 @@ func TestTerminateSession_NotFound(t *testing.T) {
 		t.Errorf("TerminateSession error: want sql.ErrNoRows in chain, got %v", err)
 	}
 }
+
+func TestListSessions(t *testing.T) {
+	cases := []struct {
+		name         string
+		setup        func(db *store.Store)
+		wantCount    int
+		wantAgentIDs []string // expected agent names in result (order: created_at DESC)
+	}{
+		{
+			name:      "empty database returns empty slice",
+			setup:     func(_ *store.Store) {},
+			wantCount: 0,
+		},
+		{
+			name: "one active session",
+			setup: func(db *store.Store) {
+				if err := db.CreateSession("ls-s1", "agent-alpha", "fp-1"); err != nil {
+					t.Fatalf("CreateSession: %v", err)
+				}
+			},
+			wantCount:    1,
+			wantAgentIDs: []string{"agent-alpha"},
+		},
+		{
+			name: "terminated sessions are excluded",
+			setup: func(db *store.Store) {
+				if err := db.CreateSession("ls-active", "agent-active", "fp-1"); err != nil {
+					t.Fatalf("CreateSession active: %v", err)
+				}
+				if err := db.CreateSession("ls-dead", "agent-dead", "fp-1"); err != nil {
+					t.Fatalf("CreateSession dead: %v", err)
+				}
+				if err := db.TerminateSession("ls-dead"); err != nil {
+					t.Fatalf("TerminateSession: %v", err)
+				}
+			},
+			wantCount:    1,
+			wantAgentIDs: []string{"agent-active"},
+		},
+		{
+			name: "tainted flag is reflected",
+			setup: func(db *store.Store) {
+				if err := db.CreateSession("ls-taint", "agent-t", "fp-1"); err != nil {
+					t.Fatalf("CreateSession: %v", err)
+				}
+				if err := db.UpdateSessionTaint("ls-taint", true); err != nil {
+					t.Fatalf("UpdateSessionTaint: %v", err)
+				}
+			},
+			wantCount:    1,
+			wantAgentIDs: []string{"agent-t"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := store.NewTestDB(t)
+			tc.setup(db)
+
+			rows, err := db.ListSessions()
+			if err != nil {
+				t.Fatalf("ListSessions: %v", err)
+			}
+			if len(rows) != tc.wantCount {
+				t.Fatalf("ListSessions count: got %d, want %d", len(rows), tc.wantCount)
+			}
+			for i, wantAgent := range tc.wantAgentIDs {
+				if rows[i].AgentName != wantAgent {
+					t.Errorf("rows[%d].AgentName: got %q, want %q", i, rows[i].AgentName, wantAgent)
+				}
+			}
+
+			// Verify taint is correctly reflected for the taint test case.
+			if tc.name == "tainted flag is reflected" && len(rows) > 0 {
+				if !rows[0].Tainted {
+					t.Error("Tainted: got false, want true for tainted session")
+				}
+			}
+		})
+	}
+}
+
+func TestListSessions_TimestampsPopulated(t *testing.T) {
+	db := store.NewTestDB(t)
+	if err := db.CreateSession("ls-ts", "agent", "fp"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	rows, err := db.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ListSessions count: got %d, want 1", len(rows))
+	}
+	if rows[0].CreatedAt == 0 {
+		t.Error("CreatedAt should be non-zero")
+	}
+	if rows[0].LastSeenAt == 0 {
+		t.Error("LastSeenAt should be non-zero")
+	}
+}
