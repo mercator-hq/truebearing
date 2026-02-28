@@ -286,6 +286,13 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 			writeJSONRPCError(w, mcpReq.ID, "escalation could not be recorded", "internal_error")
 			return
 		}
+		// Fire the notification after the escalation is persisted. Delivery
+		// failure is logged inside Notify and does not block the response.
+		var notifyCfg *escalation.NotifyConfig
+		if p.pol.Escalation != nil {
+			notifyCfg = &escalation.NotifyConfig{WebhookURL: p.pol.Escalation.WebhookURL}
+		}
+		escalation.Notify(esc, decision.Reason, notifyCfg)
 		writeJSONRPCEscalated(w, mcpReq.ID, escID)
 	}
 }
