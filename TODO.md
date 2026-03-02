@@ -1978,7 +1978,7 @@
 
 ---
 
-- [ ] **Task 11.2** — GitHub Actions CI pipeline
+- [x] **Task 11.2** — GitHub Actions CI pipeline
       **Scope:**
   - Create `.github/workflows/ci.yml`:
     - Triggers: push and pull_request to `master`.
@@ -1994,6 +1994,22 @@
   **Satisfaction check:**
   - A PR to master runs all checks automatically and blocks merge if any check fails.
   - Pushing `v0.1.0` creates a GitHub Release with four downloadable binary assets.
+
+  **Status:** Complete
+  **Files:** `.github/workflows/ci.yml`, `.github/workflows/release.yml`
+  **Notes:** The task specified Go 1.22 and 1.23 in the matrix, but `go.mod` declares
+  `go 1.25.0` as the minimum — those older toolchains would reject the module outright.
+  The matrix was updated to `['1.25', 'stable']`: the declared minimum and the latest
+  stable, which is the meaningful compatibility boundary. `fail-fast: false` ensures both
+  matrix entries always run so regressions on either aren't masked by the other failing.
+  The release workflow reads `go-version-file: go.mod` so it automatically tracks the
+  module's declared minimum without a separate hardcoded pin. Binaries are built with
+  `-ldflags="-s -w"` to strip debug info (reduces binary size ~30%). Each binary gets a
+  companion `.sha256` file uploaded alongside it — required by the Homebrew formula
+  (which currently has a placeholder hash) and for end-user verification. The release
+  notes are generated automatically via `--generate-notes` from merged PR titles.
+  `goreleaser` was not used; plain `gh release create` keeps the workflow dependency-free
+  and consistent with the project's "standard library first" ethos.
 
 ---
 

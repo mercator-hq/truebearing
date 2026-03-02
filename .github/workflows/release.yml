@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Read the minimum Go version declared in go.mod to keep the release
+          # binary consistent with what CI validated.
+          go-version-file: go.mod
+
+      - name: Build static binaries
+        run: |
+          for GOOS in linux darwin; do
+            for GOARCH in amd64 arm64; do
+              output="truebearing-${GOOS}-${GOARCH}"
+              # CGO_ENABLED=0 is required: modernc.org/sqlite is pure-Go and the
+              # binary must remain a single static executable with no libc dependency.
+              CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
+                -ldflags="-s -w" \
+                -o "$output" ./cmd
+              sha256sum "$output" > "${output}.sha256"
+            done
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            truebearing-linux-amd64 \
+            truebearing-linux-amd64.sha256 \
+            truebearing-linux-arm64 \
+            truebearing-linux-arm64.sha256 \
+            truebearing-darwin-amd64 \
+            truebearing-darwin-amd64.sha256 \
+            truebearing-darwin-arm64 \
+            truebearing-darwin-arm64.sha256 \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
