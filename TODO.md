@@ -2013,7 +2013,7 @@
 
 ---
 
-- [ ] **Task 11.3** — PyPI automated publish via CI
+- [x] **Task 11.3** — PyPI automated publish via CI
       **Scope:**
   - Add `.github/workflows/publish-python-sdk.yml`:
     - Trigger: push of a tag matching `sdk/python/v*`.
@@ -2025,6 +2025,26 @@
   **Satisfaction check:**
   - Pushing `sdk/python/v0.1.0` publishes to PyPI automatically.
   - `pip install truebearing` installs the published package on a clean machine.
+
+  **Status:** Complete
+  **Files:**
+  - `.github/workflows/publish-python-sdk.yml` — created
+  - `sdks/python/pyproject.toml` — updated
+
+  **Notes:**
+  - Workflow triggers on `sdk/python/v*` tags (distinct from `v*` binary release tags) so
+    Python SDK publishes are decoupled from Go binary releases.
+  - Added a `twine check dist/*` step before upload to catch malformed distributions early
+    (sdist missing README, wheel metadata errors) without consuming a PyPI publish attempt.
+  - `TWINE_USERNAME: __token__` is the required literal string when using PyPI API tokens;
+    the actual token is passed via `TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}`.
+  - `pyproject.toml` changes: added `[project.urls]` table (Homepage, Source, Issues pointing
+    to `github.com/mercator-hq/truebearing`); added classifiers `Operating System :: OS Independent`,
+    `Topic :: Software Development :: Libraries :: Python Modules`, `Topic :: System :: Monitoring`;
+    replaced the over-broad `Topic :: Software Development :: Libraries` with the more specific
+    `:: Python Modules` sub-classifier.
+  - PyPI name reservation (`truebearing`) must be confirmed manually before first tag push —
+    this workflow cannot verify that programmatically.
 
 ---
 

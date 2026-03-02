@@ -1,0 +1,41 @@
+name: Publish Python SDK
+
+on:
+  push:
+    tags:
+      # Trigger only on SDK-specific version tags, not the binary release tags.
+      # Example: sdk/python/v0.1.0
+      - 'sdk/python/v*'
+
+jobs:
+  publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build distribution packages
+        working-directory: sdks/python
+        run: python -m build
+
+      - name: Verify distribution contents
+        working-directory: sdks/python
+        run: twine check dist/*
+
+      - name: Upload to PyPI
+        working-directory: sdks/python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: twine upload dist/*
