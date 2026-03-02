@@ -27,6 +27,7 @@ func Write(record *AuditRecord, st *store.Store) error {
 		record.PolicyFingerprint,
 		record.AgentJWTSHA256,
 		record.ClientTraceID,
+		record.DelegationChain,
 		record.RecordedAt,
 		record.Signature,
 	); err != nil {

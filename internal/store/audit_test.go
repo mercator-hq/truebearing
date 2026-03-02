@@ -17,6 +17,7 @@ func appendRecord(t *testing.T, st *store.Store, r store.AuditRecord) {
 		r.Decision, r.DecisionReason,
 		r.PolicyFingerprint, r.AgentJWTSHA256,
 		r.ClientTraceID,
+		r.DelegationChain,
 		r.RecordedAt,
 		r.Signature,
 	)

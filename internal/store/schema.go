@@ -34,6 +34,12 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("adding revoked_at to agents: %w", err)
 	}
 
+	// Task 12.2: delegation_chain records the parent → child path for delegated
+	// agent calls. NULL for root agents and for records written by older binaries.
+	if err := s.addColumnIfMissing("audit_log", "delegation_chain", "TEXT NULL"); err != nil {
+		return fmt.Errorf("adding delegation_chain to audit_log: %w", err)
+	}
+
 	return nil
 }
 

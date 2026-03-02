@@ -56,6 +56,12 @@ type AuditRecord struct {
 	// See mvp-plan.md §9.1a for the full header priority list.
 	ClientTraceID string `json:"client_trace_id,omitempty"`
 
+	// DelegationChain records the delegation path when a child agent makes a
+	// tool call. Format: "parent → child" for one level of delegation. Empty
+	// for root agents (no parent). Omitted from the signed JSON payload when
+	// empty so that records predating Task 12.2 are not affected.
+	DelegationChain string `json:"delegation_chain,omitempty"`
+
 	// RecordedAt is the wall-clock time the proxy produced this record,
 	// in Unix nanoseconds.
 	RecordedAt int64 `json:"recorded_at"`

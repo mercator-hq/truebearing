@@ -52,6 +52,11 @@ type AuditRecord struct {
 	// when empty to match the omitempty behaviour on internal/audit.AuditRecord.
 	ClientTraceID string `json:"client_trace_id,omitempty"`
 
+	// DelegationChain records the delegation path when a child agent makes a tool
+	// call. Format: "parent → child" for one level of delegation. Empty for root
+	// agents. Omitted from JSON when empty to match omitempty on audit.AuditRecord.
+	DelegationChain string `json:"delegation_chain,omitempty"`
+
 	// RecordedAt is the wall-clock time the proxy produced this record, in Unix nanoseconds.
 	RecordedAt int64 `json:"recorded_at"`
 
@@ -97,7 +102,7 @@ type AuditFilter struct {
 func (s *Store) QueryAuditLog(filters AuditFilter) ([]AuditRecord, error) {
 	q := `SELECT id, session_id, seq, agent_name, tool_name, arguments_sha256,
 	             decision, decision_reason, policy_fingerprint, agent_jwt_sha256,
-	             client_trace_id, recorded_at, signature
+	             client_trace_id, delegation_chain, recorded_at, signature
 	      FROM audit_log
 	      WHERE 1=1`
 	var args []interface{}
@@ -138,11 +143,11 @@ func (s *Store) QueryAuditLog(filters AuditFilter) ([]AuditRecord, error) {
 	records := []AuditRecord{}
 	for rows.Next() {
 		var r AuditRecord
-		var decisionReason, clientTraceID *string
+		var decisionReason, clientTraceID, delegationChain *string
 		if err := rows.Scan(
 			&r.ID, &r.SessionID, &r.Seq, &r.AgentName, &r.ToolName, &r.ArgumentsSHA256,
 			&r.Decision, &decisionReason, &r.PolicyFingerprint, &r.AgentJWTSHA256,
-			&clientTraceID, &r.RecordedAt, &r.Signature,
+			&clientTraceID, &delegationChain, &r.RecordedAt, &r.Signature,
 		); err != nil {
 			return nil, fmt.Errorf("scanning audit log record: %w", err)
 		}
@@ -151,6 +156,9 @@ func (s *Store) QueryAuditLog(filters AuditFilter) ([]AuditRecord, error) {
 		}
 		if clientTraceID != nil {
 			r.ClientTraceID = *clientTraceID
+		}
+		if delegationChain != nil {
+			r.DelegationChain = *delegationChain
 		}
 		records = append(records, r)
 	}
@@ -164,8 +172,9 @@ func (s *Store) QueryAuditLog(filters AuditFilter) ([]AuditRecord, error) {
 // audit_log table. This is the only write path for audit_log — no UPDATE or
 // DELETE may ever be issued against this table (CLAUDE.md §7 invariant 1).
 //
-// clientTraceID and decisionReason may be empty; they are stored as NULL when
-// empty to preserve the "not set" semantic in nullable TEXT columns.
+// clientTraceID, decisionReason, and delegationChain may be empty; they are
+// stored as NULL when empty to preserve the "not set" semantic in nullable TEXT
+// columns.
 //
 // Design: parameters are accepted individually rather than as a struct to
 // avoid a circular import between internal/store and internal/audit (the audit
@@ -176,6 +185,7 @@ func (s *Store) AppendAuditRecord(
 	agentName, toolName, argumentsSHA256, decision, decisionReason string,
 	policyFingerprint, agentJWTSHA256 string,
 	clientTraceID string,
+	delegationChain string,
 	recordedAt int64,
 	signature string,
 ) error {
@@ -183,14 +193,15 @@ func (s *Store) AppendAuditRecord(
 		INSERT INTO audit_log
 			(id, session_id, seq, agent_name, tool_name, arguments_sha256,
 			 decision, decision_reason, policy_fingerprint, agent_jwt_sha256,
-			 client_trace_id, recorded_at, signature)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 client_trace_id, delegation_chain, recorded_at, signature)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if _, err := s.db.Exec(query,
 		id, sessionID, int64(seq),
 		agentName, toolName, argumentsSHA256,
 		decision, nullableString(decisionReason),
 		policyFingerprint, agentJWTSHA256,
 		nullableString(clientTraceID),
+		nullableString(delegationChain),
 		recordedAt, signature,
 	); err != nil {
 		return fmt.Errorf("appending audit record %s: %w", id, err)

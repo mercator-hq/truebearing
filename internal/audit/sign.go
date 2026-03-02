@@ -59,10 +59,10 @@ func Verify(record *AuditRecord, publicKey ed25519.PublicKey) error {
 // package is not in the hot evaluation path, so the allocation cost is
 // acceptable.
 //
-// ClientTraceID and DecisionReason are only included in the map when non-empty
-// so that their omission does not change the canonical form for records that
-// predate a field being added. This matches the json:"...,omitempty" tags on
-// the struct fields.
+// ClientTraceID, DecisionReason, and DelegationChain are only included in the
+// map when non-empty so that their omission does not change the canonical form
+// for records that predate a field being added. This matches the
+// json:"...,omitempty" tags on the struct fields.
 func canonicalJSON(r *AuditRecord) ([]byte, error) {
 	m := map[string]any{
 		"agent_jwt_sha256":   r.AgentJWTSHA256,
@@ -81,6 +81,9 @@ func canonicalJSON(r *AuditRecord) ([]byte, error) {
 	}
 	if r.DecisionReason != "" {
 		m["decision_reason"] = r.DecisionReason
+	}
+	if r.DelegationChain != "" {
+		m["delegation_chain"] = r.DelegationChain
 	}
 	return json.Marshal(m)
 }

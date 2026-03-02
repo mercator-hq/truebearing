@@ -74,6 +74,12 @@ type ToolCall struct {
 	// produces a Deny with RuleID "env.mismatch".
 	AgentEnv string
 
+	// ParentAgent is the "parent_agent" claim from the validated JWT. Empty for
+	// root agents (registered without --parent). The DelegationEvaluator uses
+	// this to load the parent's allowed tool set from the agents table and verify
+	// the child cannot call tools outside the parent's scope.
+	ParentAgent string
+
 	// RequestedAt is the wall-clock time the proxy received this request.
 	RequestedAt time.Time
 }

@@ -77,6 +77,11 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 		// executing any tool in this session regardless of which tool is called.
 		&engine.EnvEvaluator{},
 		&engine.MayUseEvaluator{},
+		// DelegationEvaluator runs after MayUse: a child agent must be further
+		// constrained to its parent's allowed tool set. If a tool passes MayUse
+		// but is not in the parent's scope, delegation blocks it here before any
+		// budget or sequence checks run.
+		&engine.DelegationEvaluator{Store: st},
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
 		&engine.SequenceEvaluator{Store: st},
@@ -302,12 +307,15 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// lookups above so the timestamp is consistent with the trace entry.
 	// AgentEnv is populated from the JWT "env" claim so the EnvEvaluator can
 	// compare it against the policy's require_env without a DB lookup.
+	// ParentAgent is populated from the JWT "parent_agent" claim so the
+	// DelegationEvaluator can load the parent's allowed tools from the store.
 	call := &engine.ToolCall{
 		SessionID:   sessionID,
 		AgentName:   claims.AgentName,
 		ToolName:    params.Name,
 		Arguments:   params.Arguments,
 		AgentEnv:    claims.Env,
+		ParentAgent: claims.ParentAgent,
 		RequestedAt: requestedAt,
 	}
 
@@ -340,7 +348,7 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// event.Seq is available and the record is persisted regardless of which
 	// decision branch runs below. Per pipeline invariant 1 (CLAUDE.md §6):
 	// exactly one AuditRecord is written per tool call, regardless of outcome.
-	p.writeAuditRecord(r, sessionID, claims.AgentName, params.Name, params.Arguments, event.Seq, decision)
+	p.writeAuditRecord(r, sessionID, claims.AgentName, claims.ParentAgent, params.Name, params.Arguments, event.Seq, decision)
 
 	// Emit an OTel span for this decision. The span attributes mirror the
 	// AuditRecord fields so the two can be correlated without a join.
@@ -425,7 +433,7 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 // the proxy never blocks a request because of an audit failure.
 func (p *Proxy) writeAuditRecord(
 	r *http.Request,
-	sessionID, agentName, toolName string,
+	sessionID, agentName, parentAgent, toolName string,
 	arguments []byte,
 	seq uint64,
 	decision engine.Decision,
@@ -455,6 +463,7 @@ func (p *Proxy) writeAuditRecord(
 		PolicyFingerprint: p.pol.Fingerprint,
 		AgentJWTSHA256:    hex.EncodeToString(jwtSum[:]),
 		ClientTraceID:     ExtractClientTraceID(r.Header),
+		DelegationChain:   buildDelegationChain(parentAgent, agentName),
 		RecordedAt:        time.Now().UnixNano(),
 	}
 
@@ -616,4 +625,15 @@ func writeGone(w http.ResponseWriter, sessionID string) {
 		Message: "Session " + sessionID + " has been terminated. All further tool calls are rejected.",
 	})
 	_, _ = w.Write(body)
+}
+
+// buildDelegationChain returns the delegation path string for the audit record.
+// For root agents (parentAgent == ""), it returns "" so the field is omitted
+// from the signed JSON payload via omitempty. For child agents it returns
+// "parent → child", giving auditors the full delegation context at a glance.
+func buildDelegationChain(parentAgent, agentName string) string {
+	if parentAgent == "" {
+		return ""
+	}
+	return parentAgent + " → " + agentName
 }

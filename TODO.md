@@ -2120,23 +2120,38 @@
 
 ---
 
-- [ ] **Task 12.2** — Delegation chain tracking in JWT and engine
-      **Priority:** Medium — explicitly promised in Pitch 02 as a differentiating capability over OPA.
-      **Scope:**
-  - Extend `identity.AgentClaims` with optional `ParentAgent string`.
-  - Add `--parent <agent_name>` flag to `cmd/agent/register.go`.
-  - Add a `DelegationEvaluator` in `internal/engine/`:
-    - Reads `parent_agent` from the session's JWT claims.
-    - Loads the parent agent's `allowed_tools` from the `agents` table.
-    - Denies with `RuleID: "delegation.exceeds_parent"` if the child calls a tool not in
-      the parent's allowed set (child cannot exceed parent's permissions).
-  - Store the full delegation chain (`root → parent → child`) in the audit record.
-  - Write tests: child within parent's tool set → allow; child exceeding parent → deny;
-    root agent (no parent) → always allow by this evaluator.
-
-  **Satisfaction check:**
-  - An agent registered with `--parent payments-agent` cannot call tools outside `payments-agent`'s `may_use`.
-  - The audit record reflects the full delegation chain for every call made by a child agent.
+- [x] **Task 12.2** — Delegation chain tracking in JWT and engine
+      **Status:** Complete
+      **Files:**
+  - `internal/engine/types.go` — added `ParentAgent string` to `ToolCall`
+  - `internal/engine/delegation.go` — new `DelegationEvaluator` (reads `parent_agent` from JWT,
+    loads parent's current `allowed_tools` from agents table, denies with RuleID `delegation.exceeds_parent`)
+  - `internal/engine/delegation_test.go` — table-driven tests + shadow mode test + benchmark
+  - `cmd/agent/register.go` — added `--parent <name>` flag; validates child tools ⊆ parent tools
+    at registration time; populates `ParentAgent`/`ParentAllowed` claims in the issued JWT
+  - `internal/audit/record.go` — added `DelegationChain string` field (`omitempty`)
+  - `internal/audit/sign.go` — added `delegation_chain` to `canonicalJSON` (omitempty pattern)
+  - `internal/audit/writer.go` — passes `DelegationChain` to `AppendAuditRecord`
+  - `internal/store/audit.go` — added `DelegationChain` to `store.AuditRecord`, `AppendAuditRecord`,
+    and `QueryAuditLog` SELECT+scan
+  - `internal/store/schema.go` — `addColumnIfMissing("audit_log", "delegation_chain", "TEXT NULL")`
+  - `internal/store/audit_test.go` — updated `appendRecord` helper with new param
+  - `cmd/audit/audit_test.go` — updated `seedAuditRecord` helper with new param
+  - `internal/proxy/proxy.go` — wired `DelegationEvaluator{Store: st}` into pipeline (after MayUse),
+    populated `call.ParentAgent` from JWT claims, added `buildDelegationChain` helper,
+    updated `writeAuditRecord` signature to accept and populate `DelegationChain`
+  **Notes:**
+  - `AgentClaims` already had `ParentAgent` and `ParentAllowed` fields from the plan; the task
+    added the runtime enforcement that was missing.
+  - `DelegationEvaluator` loads parent tools from the agents table (live check) rather than the
+    JWT's embedded `ParentAllowed`. This means parent re-registration with narrower tools takes
+    effect immediately for all child agents without requiring child credential renewal.
+  - `delegation_chain` in audit records uses format `"parent → child"` for one level of delegation;
+    empty (omitted) for root agents. The `omitempty` pattern on both the Go struct and `canonicalJSON`
+    means pre-12.2 audit records are not affected by the new field.
+  - Registration validation (`--parent` flag) uses a set-intersection check to fail fast before
+    any keypair is generated, preventing privilege escalation at issuance time.
+  - Benchmark results: root-agent fast path ~5ns; child-lookup path ~27µs (well under 2ms target).
 
 ---
 

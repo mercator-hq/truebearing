@@ -22,6 +22,7 @@ func seedAuditRecord(t *testing.T, st *store.Store, id, sessionID string, seq ui
 		decision, "",
 		"fp-test", "jwtsha-test",
 		"",
+		"", // delegation_chain: empty for root agents
 		time.Now().UnixNano(),
 		"sig-placeholder",
 	)

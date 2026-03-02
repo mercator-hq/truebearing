@@ -27,6 +27,7 @@ type minimalPolicy struct {
 func newRegisterCommand() *cobra.Command {
 	var expiryDays int
 	var env string
+	var parentName string
 
 	cmd := &cobra.Command{
 		Use:   "register <name>",
@@ -39,21 +40,28 @@ Re-registering an existing agent name overwrites its credentials.
 
 Use --env to bind the agent to a specific deployment environment (e.g.
 "production", "staging"). When the policy declares require_env, only agents
-whose --env value matches are permitted to make tool calls in that session.`,
+whose --env value matches are permitted to make tool calls in that session.
+
+Use --parent to register a child agent whose delegation scope is bounded by
+the parent's allowed tool set. The child's may_use must be a subset of the
+parent's allowed tools; registration fails if this constraint is violated,
+preventing child agents from escalating their own permissions beyond the
+parent's scope.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRegister(args[0], expiryDays, env)
+			return runRegister(args[0], expiryDays, env, parentName)
 		},
 	}
 
 	cmd.Flags().IntVar(&expiryDays, "expiry-days", 365, "JWT validity period in days")
 	cmd.Flags().StringVar(&env, "env", "", `Deployment environment for this agent (e.g. "production", "staging"). Embedded in the JWT "env" claim and enforced by the policy require_env field.`)
+	cmd.Flags().StringVar(&parentName, "parent", "", `Parent agent name. The new agent becomes a child of the named parent and is denied calls to any tool not in the parent's allowed set. Registration fails if the child's may_use contains tools outside the parent's scope.`)
 
 	return cmd
 }
 
 // runRegister implements truebearing agent register.
-func runRegister(name string, expiryDays int, env string) error {
+func runRegister(name string, expiryDays int, env, parentName string) error {
 	policyFile := viper.GetString("policy")
 
 	// Validate policy file exists and is readable before doing any key generation.
@@ -79,20 +87,70 @@ func runRegister(name string, expiryDays int, env string) error {
 	}
 	tbHome := filepath.Join(home, ".truebearing")
 
+	// Open the store early so we can validate the parent before generating keys.
+	dbPath := resolveDBPath(tbHome)
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("opening database at %s: %w", dbPath, err)
+	}
+	defer st.Close()
+
+	// If --parent is set, load the parent agent and validate that every tool in
+	// this child's may_use is within the parent's allowed set. Child agents cannot
+	// exceed parent permissions — the check here prevents privilege escalation at
+	// registration time (before any JWT is issued).
+	var parentAllowed []string
+	if parentName != "" {
+		parent, err := st.GetAgent(parentName)
+		if err != nil {
+			return fmt.Errorf("loading parent agent %q: %w", parentName, err)
+		}
+		parentAllowed, err = parent.AllowedTools()
+		if err != nil {
+			return fmt.Errorf("decoding allowed tools for parent agent %q: %w", parentName, err)
+		}
+
+		// Build a set of the parent's allowed tools for O(1) membership checks.
+		parentSet := make(map[string]struct{}, len(parentAllowed))
+		for _, t := range parentAllowed {
+			parentSet[t] = struct{}{}
+		}
+
+		// Collect every child tool that exceeds the parent's scope.
+		var exceeds []string
+		for _, t := range pol.MayUse {
+			if _, ok := parentSet[t]; !ok {
+				exceeds = append(exceeds, t)
+			}
+		}
+		if len(exceeds) > 0 {
+			return fmt.Errorf(
+				"child agent %q cannot be registered with tools outside parent %q's allowed set: [%s]\n"+
+					"parent's allowed tools: [%s]",
+				name, parentName,
+				strings.Join(exceeds, ", "),
+				strings.Join(parentAllowed, ", "),
+			)
+		}
+	}
+
 	// Generate the Ed25519 keypair. This also creates ~/.truebearing/keys/ if absent.
 	_, privKey, err := identity.GenerateKeypair(name, tbHome)
 	if err != nil {
 		return fmt.Errorf("generating keypair for agent %q: %w", name, err)
 	}
 
-	// Mint the JWT with AllowedTools populated from may_use and Env set when
-	// the --env flag was provided. The Env claim is checked by the EnvEvaluator
-	// against the policy's require_env field on every tool call.
+	// Mint the JWT with AllowedTools populated from may_use, Env set when
+	// the --env flag was provided, and ParentAgent + ParentAllowed set when
+	// the --parent flag was provided. The DelegationEvaluator in the proxy
+	// reads parent_agent from the JWT on every tool call to enforce scope.
 	claims := identity.AgentClaims{
-		AgentName:    name,
-		PolicyFile:   policyFile,
-		AllowedTools: pol.MayUse,
-		Env:          env,
+		AgentName:     name,
+		PolicyFile:    policyFile,
+		AllowedTools:  pol.MayUse,
+		Env:           env,
+		ParentAgent:   parentName,
+		ParentAllowed: parentAllowed,
 	}
 	token, err := identity.MintAgentJWT(claims, privKey, time.Duration(expiryDays)*24*time.Hour)
 	if err != nil {
@@ -120,14 +178,6 @@ func runRegister(name string, expiryDays int, env string) error {
 		return fmt.Errorf("encoding allowed tools: %w", err)
 	}
 
-	// Open the store and upsert the agent row.
-	dbPath := resolveDBPath(tbHome)
-	st, err := store.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("opening database at %s: %w", dbPath, err)
-	}
-	defer st.Close()
-
 	agentRow := &store.Agent{
 		Name:             name,
 		PublicKeyPEM:     string(pubPEMData),
@@ -144,6 +194,9 @@ func runRegister(name string, expiryDays int, env string) error {
 	fmt.Printf("Agent:          %s\n", name)
 	fmt.Printf("Public key:     %s\n", pubPEMPath)
 	fmt.Printf("JWT written to: %s\n", jwtPath)
+	if parentName != "" {
+		fmt.Printf("Parent agent:   %s\n", parentName)
+	}
 	if env != "" {
 		fmt.Printf("Environment:    %s\n", env)
 	}
