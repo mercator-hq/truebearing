@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"database/sql"
@@ -17,6 +18,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/mercator-hq/truebearing/internal/audit"
 	"github.com/mercator-hq/truebearing/internal/engine"
@@ -43,6 +48,7 @@ type Proxy struct {
 	pipeline    *engine.Pipeline
 	signingKey  ed25519.PrivateKey // nil means audit records are not signed or persisted
 	traceWriter *TraceWriter       // nil means trace capture is disabled
+	tracer      trace.Tracer       // no-op by default; replaced by SetTracer when OTel is configured
 	// dbPath is stored for display in GET /health responses. It is the path
 	// that was passed to store.Open() and is not used for any DB operation
 	// inside the proxy itself.
@@ -86,6 +92,9 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 		pipeline:   pipeline,
 		signingKey: signingKey,
 		dbPath:     dbPath,
+		// Default to a no-op tracer so emitDecisionSpan is always safe to call.
+		// SetTracer replaces this when OTel is configured via --otel-endpoint.
+		tracer: noop.NewTracerProvider().Tracer("truebearing"),
 	}
 }
 
@@ -120,6 +129,49 @@ func (p *Proxy) Policy() *policy.Policy {
 // disable trace capture (the default after New).
 func (p *Proxy) SetTraceWriter(tw *TraceWriter) {
 	p.traceWriter = tw
+}
+
+// SetTracer installs an OTel tracer for span emission. Call this from
+// cmd/serve.go after InitTracer succeeds. The default tracer is a no-op, so
+// omitting this call leaves the proxy fully functional without OTel.
+func (p *Proxy) SetTracer(t trace.Tracer) {
+	p.tracer = t
+}
+
+// emitDecisionSpan records a single OTel span for one policy decision. The
+// span covers the period from request arrival to the moment the decision is
+// reached, and carries attributes that match the AuditRecord fields exactly so
+// the two can be correlated by session_id + seq without any additional join.
+//
+// Span errors are silently dropped — OTel is advisory and must never block
+// a tool call or affect the decision outcome (fail open on observability).
+func (p *Proxy) emitDecisionSpan(
+	ctx context.Context,
+	start time.Time,
+	sessionID, agentName, toolName string,
+	decision engine.Decision,
+	policyFingerprint, clientTraceID string,
+) {
+	_, span := p.tracer.Start(
+		ctx,
+		"truebearing.tool_call",
+		trace.WithTimestamp(start),
+	)
+	span.SetAttributes(
+		attribute.String("truebearing.session_id", sessionID),
+		attribute.String("truebearing.agent_name", agentName),
+		attribute.String("truebearing.tool_name", toolName),
+		attribute.String("truebearing.decision", string(decision.Action)),
+		attribute.String("truebearing.rule_id", decision.RuleID),
+		attribute.String("truebearing.policy_fingerprint", policyFingerprint),
+		attribute.String("truebearing.client_trace_id", clientTraceID),
+	)
+	// Mark the span as an error for denied calls so observability dashboards
+	// can filter on span status without parsing the decision attribute.
+	if decision.Action == engine.Deny || decision.Action == engine.ShadowDeny {
+		span.SetStatus(codes.Error, decision.Reason)
+	}
+	span.End()
 }
 
 // handleMCP is the inner handler reached after auth and session middleware pass.
@@ -289,6 +341,21 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// decision branch runs below. Per pipeline invariant 1 (CLAUDE.md §6):
 	// exactly one AuditRecord is written per tool call, regardless of outcome.
 	p.writeAuditRecord(r, sessionID, claims.AgentName, params.Name, params.Arguments, event.Seq, decision)
+
+	// Emit an OTel span for this decision. The span attributes mirror the
+	// AuditRecord fields so the two can be correlated without a join.
+	// emitDecisionSpan is always safe to call — the tracer defaults to no-op
+	// when OTel is not configured. Span errors are silently dropped.
+	p.emitDecisionSpan(
+		r.Context(),
+		requestedAt,
+		sessionID,
+		claims.AgentName,
+		params.Name,
+		decision,
+		p.pol.Fingerprint,
+		ExtractClientTraceID(r.Header),
+	)
 
 	// Persist taint state mutation if the pipeline changed sess.Tainted.
 	// Fail closed: if we cannot persist the new taint state, the session would

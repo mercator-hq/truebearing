@@ -1908,28 +1908,37 @@
 
 ---
 
-- [ ] **Task 10.1** — OpenTelemetry trace emission per policy decision
+- [x] **Task 10.1** — OpenTelemetry trace emission per policy decision
       **Priority:** High for SecOps/DevOps sales. Low for developer/investor pitches.
-      **Scope:**
-  - Add `go.opentelemetry.io/otel` and `go.opentelemetry.io/otel/exporters/otlp/otlphttp` to
-    `go.mod` with a justification comment: stdlib has no OTel support; OTel SDK is CNCF-graduated.
-  - In `internal/proxy/proxy.go`, after each pipeline decision, emit an OTel span with attributes:
-    `truebearing.session_id`, `truebearing.agent_name`, `truebearing.tool_name`,
-    `truebearing.decision`, `truebearing.rule_id`, `truebearing.policy_fingerprint`,
-    `truebearing.client_trace_id`.
-  - Configure the OTLP exporter via `OTEL_EXPORTER_OTLP_ENDPOINT` env var and `OTEL_SERVICE_NAME`.
-    If absent, OTel is disabled silently — fail open on observability, fail closed on enforcement.
-  - Add `--otel-endpoint <url>` flag to `cmd/serve.go` as an alternative to the env var.
-  - Update `docs/demo-script.md` with an optional Act 7: start Jaeger, set the env var, run the
-    demo, show the per-session execution graph in the Jaeger UI.
-  - No OTel import in `internal/engine/` — OTel is a proxy concern only.
-  - Write tests: with endpoint set, spans are emitted; without endpoint, no panic, no error,
-    enforcement unchanged.
-
-  **Satisfaction check:**
-  - `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 truebearing serve` emits spans visible in Jaeger.
-  - Proxy functions identically with OTel absent.
-  - No OTel code appears in `internal/engine/`.
+      **Status:** Complete
+      **Files:**
+  - `internal/proxy/otel.go` — new. `InitTracer(endpoint string)` sets up the OTLP HTTP
+    exporter (or returns a no-op tracer when no endpoint is configured). `parseOTLPEndpoint`
+    handles http://, https://, and bare host:port formats.
+  - `internal/proxy/proxy.go` — added `tracer trace.Tracer` field to `Proxy` struct,
+    `SetTracer(t trace.Tracer)` method, and `emitDecisionSpan` method. Span is emitted
+    immediately after `writeAuditRecord`, carrying all seven `truebearing.*` attributes.
+    Default tracer is a no-op so existing behaviour is unchanged without OTel.
+  - `cmd/serve.go` — added `--otel-endpoint` flag; `InitTracer` is called after `proxy.New`;
+    `SetTracer` installs the tracer; `otelShutdown` is deferred for clean flush on exit.
+  - `go.mod` / `go.sum` — added `go.opentelemetry.io/otel`, `…/sdk`, `…/trace`,
+    `…/exporters/otlp/otlptrace/otlptracehttp` v1.40.0 as direct dependencies with
+    justification comment. Indirect deps: grpc, protobuf, grpc-gateway transitive pull-ins.
+  - `internal/proxy/otel_test.go` — new. Table-driven tests covering: no-op when endpoint
+    absent, env-var pickup, flag override, `parseOTLPEndpoint` all three formats,
+    `emitDecisionSpan` attribute correctness (via `tracetest.InMemoryExporter`), no-op
+    does not panic, enforcement unchanged across all decision types.
+  - `docs/demo-script.md` — added optional Act 7 (Jaeger integration) with Docker run
+    command, startup output, span attribute listing, and Q&A answer updated from
+    "on the roadmap" to "yes, here is how."
+      **Notes:**
+  - Used `otlptracehttp` (not the older `otlphttp` path mentioned in the TODO spec) — the
+    current canonical import path under the OTel Go SDK v1.x.
+  - `emitDecisionSpan` marks deny and shadow_deny spans with `codes.Error` so dashboards
+    can filter on span status without parsing the `truebearing.decision` attribute.
+  - `sdkresource.New` result error is intentionally discarded (returns a valid resource on
+    partial failure) per the OTel SDK contract.
+  - No OTel import anywhere in `internal/engine/` — all span logic is proxy-layer only.
 
 ---
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -23,6 +24,7 @@ func newServeCommand() *cobra.Command {
 		port         int
 		captureTrace string
 		stdio        bool
+		otelEndpoint string
 	)
 
 	cmd := &cobra.Command{
@@ -76,6 +78,20 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 			}
 
 			p := proxy.New(upstreamURL, st, pol, dbPath, signingKey)
+
+			// Initialise OTel tracing. If --otel-endpoint is set (or
+			// OTEL_EXPORTER_OTLP_ENDPOINT is in the environment), spans are
+			// emitted per tool-call decision to the configured collector.
+			// InitTracer fails open: a missing or unreachable endpoint returns
+			// a no-op tracer so enforcement is unaffected.
+			tracer, otelShutdown, otelErr := proxy.InitTracer(otelEndpoint)
+			if otelErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: OTel tracer init failed — running without tracing: %v\n", otelErr)
+			} else if otelEndpoint != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "  otel-endpoint  %s\n", otelEndpoint)
+			}
+			p.SetTracer(tracer)
+			defer otelShutdown(context.Background())
 
 			// Open the trace capture file if --capture-trace was set. The file is
 			// opened in append mode so a proxy restart does not truncate prior
@@ -133,6 +149,7 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 	cmd.Flags().IntVar(&port, "port", 7773, "local port to listen on")
 	cmd.Flags().StringVar(&captureTrace, "capture-trace", "", "write all MCP traffic to a JSONL trace file")
 	cmd.Flags().BoolVar(&stdio, "stdio", false, "accept MCP requests on stdin/stdout instead of HTTP")
+	cmd.Flags().StringVar(&otelEndpoint, "otel-endpoint", "", "OTLP HTTP endpoint for trace emission (e.g. http://localhost:4318); overrides OTEL_EXPORTER_OTLP_ENDPOINT")
 
 	return cmd
 }

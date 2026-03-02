@@ -481,6 +481,105 @@ This is the proof."*
 
 ---
 
+## Act 7 — OpenTelemetry Integration (optional, 3 minutes)
+
+> **When to use:** SecOps or DevOps audiences already running Datadog, Grafana, or Jaeger.
+> Skip for investor or developer pitches — it adds complexity without adding to the core story.
+
+**What you say:** *"If your team already has a distributed tracing stack, TrueBearing plugs
+straight in. Every policy decision — allow, deny, escalate — shows up as a span in your
+existing trace. You can see TrueBearing's block next to the LLM call that caused it,
+without any extra tooling or log correlation."*
+
+**Prerequisites:** Docker installed. Run this before the call:
+
+```sh
+# Start a local Jaeger all-in-one instance (OTLP HTTP on port 4318, UI on 16686)
+docker run -d --name jaeger \
+  -p 4318:4318 \
+  -p 16686:16686 \
+  jaegertracing/all-in-one:latest
+```
+
+Start the proxy with OTel enabled:
+
+```sh
+# Left terminal — proxy with OTel
+./truebearing serve \
+  --upstream http://localhost:8080 \
+  --policy testdata/policies/fintech-payment-sequence.policy.yaml \
+  --port 7773 \
+  --otel-endpoint http://localhost:4318
+```
+
+**Expected startup output (note the extra line):**
+
+```
+TrueBearing proxy
+  listening on  :7773
+  upstream      http://localhost:8080
+  policy        testdata/policies/fintech-payment-sequence.policy.yaml  (b17b0a71)
+  db            ~/.truebearing/truebearing.db
+  otel-endpoint http://localhost:4318
+```
+
+Alternatively, set the standard OTel env var instead of the flag:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+OTEL_SERVICE_NAME=truebearing \
+  ./truebearing serve \
+  --upstream http://localhost:8080 \
+  --policy testdata/policies/fintech-payment-sequence.policy.yaml
+```
+
+Send a sequence-violating call (same as Act 4):
+
+```sh
+curl -s -X POST http://localhost:7773/mcp/v1 \
+  -H "Authorization: Bearer $(cat ~/.truebearing/keys/demo-agent.jwt)" \
+  -H "X-TrueBearing-Session-ID: sess-otel-demo-001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "tools/call",
+    "params": {
+      "name": "execute_wire_transfer",
+      "arguments": {"vendor_id": "v_123", "amount_usd": 500, "invoice_ref": "INV-001"}
+    }
+  }' | jq .
+```
+
+Open the Jaeger UI in the browser: [http://localhost:16686](http://localhost:16686)
+
+Select service **truebearing** → Find Traces → click the `truebearing.tool_call` span.
+
+**What the audience sees in the span:**
+
+```
+truebearing.tool_call
+  truebearing.session_id:        sess-otel-demo-001
+  truebearing.agent_name:        payments-agent
+  truebearing.tool_name:         execute_wire_transfer
+  truebearing.decision:          deny
+  truebearing.rule_id:           sequence
+  truebearing.policy_fingerprint: b17b0a71...
+  truebearing.client_trace_id:   (populated from traceparent header if present)
+```
+
+**What you say:** *"Every attribute in that span matches the audit record exactly — same
+session ID, same fingerprint. If your LLM framework sends a `traceparent` header,
+TrueBearing stores it in both the span and the signed audit log, so you can jump from
+a blocked Datadog trace directly to the immutable audit record. Zero configuration on
+your side — the moment you point TrueBearing at your existing OTel collector, it just works."*
+
+> **Fallback if Jaeger is unavailable:** Point to the `truebearing.client_trace_id` field in
+> `truebearing audit query` output and note that the Q&A already mentions this. Skip the
+> browser demo and narrate the UX instead.
+
+---
+
 ## Closing (30 seconds)
 
 **What you say:** *"Here is the setup in total:"*
@@ -611,7 +710,11 @@ A: Child agents receive JWTs scoped to a subset of the parent's tools. The proxy
 the parent does not have.
 
 **Q: Is there an OpenTelemetry integration?**
-A: TrueBearing captures distributed trace IDs from standard headers (`traceparent`,
-`x-datadog-trace-id`, `x-cloud-trace-context`, etc.) and stores them in the audit log. You can
-query `truebearing audit query --trace-id <id>` to correlate a blocked call with your existing
-observability stack. Full OTel emission is on the roadmap.
+A: Yes. Pass `--otel-endpoint http://your-collector:4318` to `truebearing serve` (or set
+`OTEL_EXPORTER_OTLP_ENDPOINT`). TrueBearing emits one span per tool call decision with
+attributes for session ID, agent name, tool name, decision, rule ID, and policy fingerprint.
+If OTel is not configured, the proxy operates identically — fail open on observability,
+fail closed on enforcement. TrueBearing also captures standard distributed trace IDs
+(`traceparent`, `x-datadog-trace-id`, etc.) from request headers and stores them in the
+signed audit log, so `truebearing audit query --trace-id <id>` links a blocked call directly
+to the corresponding span in your existing observability stack.
