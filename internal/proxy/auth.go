@@ -69,6 +69,14 @@ func AuthMiddleware(st *store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Revocation check happens before signature verification: a revoked agent
+			// is blocked immediately regardless of JWT validity. This is checked on
+			// every request so that revocation takes effect for in-flight sessions too.
+			if agent.IsRevoked() {
+				writeUnauthorized(w, "agent credentials revoked")
+				return
+			}
+
 			pubKey, err := parsePublicKeyPEM(agent.PublicKeyPEM)
 			if err != nil {
 				// The stored PEM is corrupt — fail closed rather than defaulting to allow.

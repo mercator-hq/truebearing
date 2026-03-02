@@ -258,6 +258,112 @@ func TestAuthMiddleware_ResponseBody_Format(t *testing.T) {
 	}
 }
 
+// --- Revocation tests ---
+
+func TestAuthMiddleware_RevokedAgent_Returns401(t *testing.T) {
+	st := store.NewTestDB(t)
+	_, priv := registerTestAgent(t, st, "test-agent")
+	token := mintTestToken(t, priv, "test-agent", time.Hour)
+
+	if err := st.RevokeAgent("test-agent"); err != nil {
+		t.Fatalf("RevokeAgent: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+
+	code, body, _ := runMiddleware(t, st, r)
+
+	if code != http.StatusUnauthorized {
+		t.Errorf("status: want 401, got %d", code)
+	}
+	if !strings.Contains(body, "revoked") {
+		t.Errorf("body must mention revocation, got %q", body)
+	}
+}
+
+func TestAuthMiddleware_RevokedAgent_OtherAgentUnaffected(t *testing.T) {
+	st := store.NewTestDB(t)
+
+	// Register two agents. Revoke one. The other must still authenticate.
+	_, privA := registerTestAgent(t, st, "agent-alpha")
+	_, privB := registerTestAgent(t, st, "agent-beta")
+
+	tokenA := mintTestToken(t, privA, "agent-alpha", time.Hour)
+	tokenB := mintTestToken(t, privB, "agent-beta", time.Hour)
+
+	if err := st.RevokeAgent("agent-alpha"); err != nil {
+		t.Fatalf("RevokeAgent agent-alpha: %v", err)
+	}
+
+	// agent-alpha must be rejected.
+	rA := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	rA.Header.Set("Authorization", "Bearer "+tokenA)
+	codeA, _, _ := runMiddleware(t, st, rA)
+	if codeA != http.StatusUnauthorized {
+		t.Errorf("agent-alpha (revoked): want 401, got %d", codeA)
+	}
+
+	// agent-beta must still be accepted.
+	rB := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	rB.Header.Set("Authorization", "Bearer "+tokenB)
+	codeB, _, claimsB := runMiddleware(t, st, rB)
+	if codeB != http.StatusOK {
+		t.Errorf("agent-beta (active): want 200, got %d", codeB)
+	}
+	if claimsB == nil || claimsB.AgentName != "agent-beta" {
+		t.Errorf("agent-beta claims: got %v, want AgentName=agent-beta", claimsB)
+	}
+}
+
+func TestAuthMiddleware_ReRegisteredAgent_ClearsRevocation(t *testing.T) {
+	st := store.NewTestDB(t)
+
+	pub, priv := registerTestAgent(t, st, "test-agent")
+	token := mintTestToken(t, priv, "test-agent", time.Hour)
+
+	if err := st.RevokeAgent("test-agent"); err != nil {
+		t.Fatalf("RevokeAgent: %v", err)
+	}
+
+	// Confirm the agent is blocked after revocation.
+	r := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	code, _, _ := runMiddleware(t, st, r)
+	if code != http.StatusUnauthorized {
+		t.Fatalf("after revoke: want 401, got %d", code)
+	}
+
+	// Re-register (simulates key rotation / credential renewal).
+	// UpsertAgent clears revoked_at — the agent is active again.
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatalf("marshalling public key: %v", err)
+	}
+	pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	if err := st.UpsertAgent(&store.Agent{
+		Name:             "test-agent",
+		PublicKeyPEM:     pubPEM,
+		PolicyFile:       "./test.policy.yaml",
+		AllowedToolsJSON: `["test_tool"]`,
+		RegisteredAt:     0,
+		JWTPreview:       token,
+	}); err != nil {
+		t.Fatalf("re-register UpsertAgent: %v", err)
+	}
+
+	// Same token must now be accepted again.
+	r2 := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	r2.Header.Set("Authorization", "Bearer "+token)
+	code2, _, claims2 := runMiddleware(t, st, r2)
+	if code2 != http.StatusOK {
+		t.Errorf("after re-register: want 200, got %d", code2)
+	}
+	if claims2 == nil {
+		t.Error("claims must be set after re-register clears revocation")
+	}
+}
+
 // --- Unit tests for unexported helpers ---
 
 func TestBearerToken(t *testing.T) {

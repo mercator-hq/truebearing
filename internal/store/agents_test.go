@@ -123,6 +123,127 @@ func TestListAgents_OrderByRegisteredAt(t *testing.T) {
 	}
 }
 
+func TestRevokeAgent_SetsRevokedAt(t *testing.T) {
+	db := store.NewTestDB(t)
+
+	a := &store.Agent{
+		Name:             "revoke-me",
+		PublicKeyPEM:     "key",
+		PolicyFile:       "./policy.yaml",
+		AllowedToolsJSON: `[]`,
+		RegisteredAt:     1000,
+		JWTPreview:       "jwt",
+	}
+	if err := db.UpsertAgent(a); err != nil {
+		t.Fatalf("UpsertAgent: %v", err)
+	}
+
+	// Confirm not yet revoked.
+	before, err := db.GetAgent("revoke-me")
+	if err != nil {
+		t.Fatalf("GetAgent before revoke: %v", err)
+	}
+	if before.IsRevoked() {
+		t.Fatal("agent should not be revoked before RevokeAgent is called")
+	}
+
+	if err := db.RevokeAgent("revoke-me"); err != nil {
+		t.Fatalf("RevokeAgent: %v", err)
+	}
+
+	after, err := db.GetAgent("revoke-me")
+	if err != nil {
+		t.Fatalf("GetAgent after revoke: %v", err)
+	}
+	if !after.IsRevoked() {
+		t.Fatal("agent must be revoked after RevokeAgent is called")
+	}
+	if after.RevokedAt == nil || *after.RevokedAt == 0 {
+		t.Fatal("RevokedAt must be a non-zero unix nanosecond timestamp")
+	}
+}
+
+func TestRevokeAgent_NotFound(t *testing.T) {
+	db := store.NewTestDB(t)
+
+	err := db.RevokeAgent("nonexistent-agent")
+	if err == nil {
+		t.Fatal("RevokeAgent on a non-existent agent must return an error")
+	}
+}
+
+func TestRevokeAgent_AppearsInListAgents(t *testing.T) {
+	db := store.NewTestDB(t)
+
+	agents := []*store.Agent{
+		{Name: "active-agent", AllowedToolsJSON: "[]", RegisteredAt: 1000, JWTPreview: "jwt1"},
+		{Name: "soon-revoked", AllowedToolsJSON: "[]", RegisteredAt: 2000, JWTPreview: "jwt2"},
+	}
+	for _, a := range agents {
+		if err := db.UpsertAgent(a); err != nil {
+			t.Fatalf("UpsertAgent %q: %v", a.Name, err)
+		}
+	}
+
+	if err := db.RevokeAgent("soon-revoked"); err != nil {
+		t.Fatalf("RevokeAgent: %v", err)
+	}
+
+	listed, err := db.ListAgents()
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("got %d agents, want 2", len(listed))
+	}
+
+	for _, la := range listed {
+		switch la.Name {
+		case "active-agent":
+			if la.IsRevoked() {
+				t.Errorf("active-agent must not be revoked")
+			}
+		case "soon-revoked":
+			if !la.IsRevoked() {
+				t.Errorf("soon-revoked must be revoked")
+			}
+		}
+	}
+}
+
+func TestUpsertAgent_ClearsRevocation(t *testing.T) {
+	db := store.NewTestDB(t)
+
+	a := &store.Agent{
+		Name:             "re-register-me",
+		PublicKeyPEM:     "key",
+		PolicyFile:       "./policy.yaml",
+		AllowedToolsJSON: `[]`,
+		RegisteredAt:     1000,
+		JWTPreview:       "old-jwt",
+	}
+	if err := db.UpsertAgent(a); err != nil {
+		t.Fatalf("initial UpsertAgent: %v", err)
+	}
+	if err := db.RevokeAgent("re-register-me"); err != nil {
+		t.Fatalf("RevokeAgent: %v", err)
+	}
+
+	// Re-registering must clear revocation (new credentials are fresh and active).
+	a.JWTPreview = "new-jwt"
+	if err := db.UpsertAgent(a); err != nil {
+		t.Fatalf("re-register UpsertAgent: %v", err)
+	}
+
+	refreshed, err := db.GetAgent("re-register-me")
+	if err != nil {
+		t.Fatalf("GetAgent after re-register: %v", err)
+	}
+	if refreshed.IsRevoked() {
+		t.Fatal("re-registering an agent must clear the revocation")
+	}
+}
+
 func TestAgent_AllowedTools(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -2088,20 +2088,35 @@
 
 ---
 
-- [ ] **Task 12.1** — `truebearing agent revoke`: agent credential revocation
-      **Scope:**
-  - Add `cmd/agent/revoke.go` implementing `truebearing agent revoke <name>`.
-  - Add `revoked_at TIMESTAMP NULL` column to the `agents` table in `internal/store/schema.go`
-    (via a new migration step — schema migrations must be idempotent per store invariants).
-  - The proxy's JWT auth middleware must check `agents.revoked_at` is NULL after validating the
-    JWT signature. A valid JWT from a revoked agent is rejected with HTTP 401.
-  - Write tests: revoke an agent; subsequent proxy requests with that JWT return 401; other
-    agents are unaffected. Check revocation on every request, not only at session start.
-  - Update `cmd/agent/list.go` to display revocation status in the table.
-
-  **Satisfaction check:**
-  - `truebearing agent revoke my-agent` immediately blocks new and existing sessions for that agent.
-  - The auth middleware checks revocation even for sessions that started before revocation.
+- [x] **Task 12.1** — `truebearing agent revoke`: agent credential revocation
+  **Status:** Complete
+  **Files:**
+  - `cmd/agent/revoke.go` — new; `truebearing agent revoke <name>` command
+  - `cmd/agent/agent.go` — wired `newRevokeCommand()`; updated Long description
+  - `cmd/agent/list.go` — added STATUS column; shows "active" or "REVOKED <timestamp>"
+  - `internal/store/schema.go` — added `revoked_at INTEGER NULL` to `createAgentsTable`;
+    added `addColumnIfMissing()` helper called from `migrate()` for existing databases
+    (idempotent via `PRAGMA table_info` check before `ALTER TABLE`)
+  - `internal/store/agents.go` — added `RevokedAt *int64` + `IsRevoked()` to `Agent`;
+    added `RevokeAgent(name string) error`; updated `GetAgent` / `ListAgents` / `UpsertAgent`
+    to include `revoked_at` column (UpsertAgent writes NULL to clear revocation on re-register)
+  - `internal/proxy/auth.go` — revocation check inserted between `GetAgent` and PEM parse;
+    revoked agents get 401 "agent credentials revoked" on every request
+  - `internal/store/store_test.go` — added `{"agents","revoked_at"}` to `expectedColumns`;
+    updated raw INSERT in isolation test to include `revoked_at` column
+  - `internal/store/agents_test.go` — added `TestRevokeAgent_SetsRevokedAt`,
+    `TestRevokeAgent_NotFound`, `TestRevokeAgent_AppearsInListAgents`,
+    `TestUpsertAgent_ClearsRevocation`
+  - `internal/proxy/auth_test.go` — added `TestAuthMiddleware_RevokedAgent_Returns401`,
+    `TestAuthMiddleware_RevokedAgent_OtherAgentUnaffected`,
+    `TestAuthMiddleware_ReRegisteredAgent_ClearsRevocation`
+  **Notes:** Revocation check runs before PEM parse and JWT sig verification — this is
+  intentional. An attacker whose agent is revoked still presents a syntactically valid JWT;
+  blocking early avoids wasting a crypto operation. The check is on every request (not only
+  session creation) so revocation takes effect for sessions that started before the revoke.
+  Re-registering an agent (`UpsertAgent`) writes `revoked_at = NULL`, restoring access — this
+  is the intended credential renewal path. All tests pass; `go vet`, `gofmt`, and
+  `go build ./...` are clean.
 
 ---
 

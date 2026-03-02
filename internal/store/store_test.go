@@ -59,6 +59,7 @@ var expectedColumns = []struct {
 	{"agents", "allowed_tools_json"},
 	{"agents", "registered_at"},
 	{"agents", "jwt_preview"},
+	{"agents", "revoked_at"},
 
 	{"escalations", "id"},
 	{"escalations", "session_id"},
@@ -189,8 +190,8 @@ func TestNewTestDB_Isolation(t *testing.T) {
 
 	// Insert an agent row into s1.
 	_, err := s1.db.Exec(
-		`INSERT INTO agents (name, public_key_pem, policy_file, allowed_tools_json, registered_at, jwt_preview)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO agents (name, public_key_pem, policy_file, allowed_tools_json, registered_at, jwt_preview, revoked_at)
+		 VALUES (?, ?, ?, ?, ?, ?, NULL)`,
 		"isolation-test-agent", "pubkey", "policy.yaml", "[]", 1000000000, "preview",
 	)
 	if err != nil {

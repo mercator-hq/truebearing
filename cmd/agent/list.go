@@ -20,7 +20,7 @@ func newListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List registered agents",
 		Long: `Show all registered agents: name, registration date, policy file,
-allowed tool count, and JWT expiry.`,
+allowed tool count, JWT expiry, and revocation status.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runList()
 		},
@@ -53,7 +53,7 @@ func runList() error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPOLICY FILE\tTOOLS\tREGISTERED\tEXPIRES")
+	fmt.Fprintln(w, "NAME\tPOLICY FILE\tTOOLS\tREGISTERED\tEXPIRES\tSTATUS")
 	for _, a := range agents {
 		toolCount := "?"
 		if tools, err := a.AllowedTools(); err == nil {
@@ -67,8 +67,14 @@ func runList() error {
 			expiresAt = t.Format("2006-01-02 15:04")
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			a.Name, a.PolicyFile, toolCount, registeredAt, expiresAt)
+		status := "active"
+		if a.IsRevoked() {
+			revokedTime := time.Unix(0, *a.RevokedAt).Format("2006-01-02 15:04")
+			status = fmt.Sprintf("REVOKED %s", revokedTime)
+		}
+
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			a.Name, a.PolicyFile, toolCount, registeredAt, expiresAt, status)
 	}
 	return w.Flush()
 }
