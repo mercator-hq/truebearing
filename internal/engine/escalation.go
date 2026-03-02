@@ -12,7 +12,6 @@ import (
 
 	"github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/session"
-	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // EscalationEvaluator is the fifth and final stage in the evaluation pipeline.
@@ -32,7 +31,7 @@ import (
 type EscalationEvaluator struct {
 	// Store is the data access layer used to check for prior human approvals.
 	// Must be non-nil before any call to Evaluate.
-	Store *store.Store
+	Store QueryBackend
 }
 
 // Evaluate checks whether the called tool's arguments satisfy the escalate_when

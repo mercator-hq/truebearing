@@ -14,3 +14,10 @@
  */
 export { PolicyProxy } from "./proxy";
 export type { PolicyProxyOptions } from "./proxy";
+export { WasmEngine } from "./wasm_engine";
+export type {
+  WasmDecision,
+  WasmSessionState,
+  WasmSessionEvent,
+  WasmApprovedEscalation,
+} from "./wasm_engine";

@@ -7,7 +7,6 @@ import (
 
 	"github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/session"
-	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // RateLimitEvaluator is a stage in the evaluation pipeline. It enforces per-tool
@@ -25,7 +24,7 @@ import (
 type RateLimitEvaluator struct {
 	// Store is the data access layer used to count recent events for the tool.
 	// Must be non-nil before any call to Evaluate.
-	Store *store.Store
+	Store QueryBackend
 }
 
 // Evaluate checks whether the current call would exceed the tool's configured

@@ -7,7 +7,6 @@ import (
 
 	"github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/session"
-	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // SequenceEvaluator is the fourth stage in the evaluation pipeline. It enforces
@@ -16,13 +15,13 @@ import (
 // allowed-event history; denied and escalated calls are excluded because they
 // were never executed upstream and must not contribute to sequence state.
 //
-// The evaluator requires a non-nil *store.Store to query session_events. It is
+// The evaluator requires a non-nil QueryBackend to query session_events. It is
 // read-only per pipeline invariant 2: it queries history but never writes to
 // the session or policy.
 type SequenceEvaluator struct {
 	// Store is the data access layer used to fetch the session's event history.
 	// Must be non-nil before any call to Evaluate.
-	Store *store.Store
+	Store QueryBackend
 }
 
 // Evaluate checks all three sequence predicates for the called tool and returns

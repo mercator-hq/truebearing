@@ -94,13 +94,13 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 		// constrained to its parent's allowed tool set. If a tool passes MayUse
 		// but is not in the parent's scope, delegation blocks it here before any
 		// budget or sequence checks run.
-		&engine.DelegationEvaluator{Store: st},
+		&engine.DelegationEvaluator{Store: &engine.StoreBackend{Store: st}},
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
-		&engine.SequenceEvaluator{Store: st},
+		&engine.SequenceEvaluator{Store: &engine.StoreBackend{Store: st}},
 		&engine.ContentEvaluator{},
-		&engine.RateLimitEvaluator{Store: st},
-		&engine.EscalationEvaluator{Store: st},
+		&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}},
+		&engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}},
 	)
 	return &Proxy{
 		upstream:   upstream,

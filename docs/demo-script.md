@@ -703,6 +703,29 @@ the tool that was blocked.
 **Q: Can we run this as a sidecar in Kubernetes?**
 A: Yes. It is a single static Go binary. No external dependencies, no database server.
 Mount the policy file via ConfigMap and the SQLite database via a PersistentVolume.
+There is also an in-process option: see "WASM engine" below.
+
+**Q: You mentioned a WASM-compiled policy engine. What does that mean in practice?**
+A: TrueBearing ships two enforcement modes: the proxy (sidecar) and a WASM binary you
+embed directly in your Node.js process. The WASM mode skips the HTTP round-trip entirely.
+You compile it once:
+```sh
+GOOS=js GOARCH=wasm go build -o truebearing.wasm ./cmd/wasm/
+```
+Then load it in Node.js:
+```typescript
+import { WasmEngine } from '@mercator/truebearing';
+const engine = await WasmEngine.load('./truebearing.wasm');
+const decision = engine.evaluate(policyJSON, sessionState, callJSON);
+// decision.action: 'allow' | 'deny' | 'escalate' | 'shadow_deny'
+```
+Measured latency on Apple M1: p50=0.33ms, p99=3.1ms for a 50-event session history.
+At max history (1000 events), p50=4.5ms due to JSON boundary overhead. The evaluation
+logic itself is sub-1ms (matching the native Go binary). The WASM binary contains no
+SQLite — the caller maintains session state and passes it as JSON on each call.
+The proxy remains the right choice for multi-language deployments (Python, Go, other SDKs)
+and when you want centralised audit storage. The WASM option is for high-throughput
+Node.js agents where a sidecar adds unacceptable latency.
 
 **Q: What about multi-agent systems where Agent A spawns Agent B?**
 A: Child agents receive JWTs scoped to a subset of the parent's tools. The proxy validates that

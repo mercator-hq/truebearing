@@ -287,7 +287,7 @@ func TestEscalationEvaluator(t *testing.T) {
 			}
 
 			pol := escalPolicy(tc.toolName, tc.rule)
-			eval := &engine.EscalationEvaluator{Store: st}
+			eval := &engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}}
 			call := &engine.ToolCall{
 				SessionID: sid,
 				AgentName: "test-agent",
@@ -349,7 +349,7 @@ func TestEscalationEvaluator_ToolNotInPolicyTools(t *testing.T) {
 		MayUse:          []string{"unlisted-tool"},
 		Tools:           map[string]policy.ToolPolicy{},
 	}
-	eval := &engine.EscalationEvaluator{Store: st}
+	eval := &engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}}
 	call := &engine.ToolCall{
 		SessionID: sid,
 		ToolName:  "unlisted-tool",
@@ -382,7 +382,7 @@ func TestEscalationEvaluator_ApprovalHashIsolation(t *testing.T) {
 		Operator:     ">",
 		Value:        10000,
 	})
-	eval := &engine.EscalationEvaluator{Store: st}
+	eval := &engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}}
 	call := &engine.ToolCall{
 		SessionID: sid,
 		ToolName:  "high-value-tool",
@@ -419,7 +419,7 @@ func TestEscalationEvaluator_StoreError(t *testing.T) {
 		Operator:     ">",
 		Value:        10000,
 	})
-	eval := &engine.EscalationEvaluator{Store: st}
+	eval := &engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}}
 	call := &engine.ToolCall{
 		SessionID: sid,
 		ToolName:  "high-value-tool",
@@ -447,7 +447,7 @@ func TestEscalationEvaluator_ShadowMode(t *testing.T) {
 	})
 	pol.EnforcementMode = policy.EnforcementShadow
 
-	pip := engine.New(&engine.EscalationEvaluator{Store: st})
+	pip := engine.New(&engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}})
 	call := &engine.ToolCall{
 		SessionID: sid,
 		AgentName: "test-agent",
@@ -474,7 +474,7 @@ func TestEscalationEvaluator_InvalidRegex(t *testing.T) {
 		Operator:     "matches",
 		Value:        `[invalid-regex`,
 	})
-	eval := &engine.EscalationEvaluator{Store: st}
+	eval := &engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}}
 	call := &engine.ToolCall{
 		SessionID: sid,
 		ToolName:  "guarded-tool",
@@ -511,7 +511,7 @@ func BenchmarkEscalationEvaluator(b *testing.B) {
 		Value:        10000,
 	}
 	pol := escalPolicy("high-value-tool", rule)
-	eval := &engine.EscalationEvaluator{Store: st}
+	eval := &engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}}
 	sess := escalSess(sid)
 	call := &engine.ToolCall{
 		SessionID: sid,

@@ -58,7 +58,7 @@ func TestDelegationEvaluator(t *testing.T) {
 	// Register a parent agent that is only allowed to call two of the three tools.
 	registerParent(t, st, "payments-agent", []string{"read_invoice", "verify_invoice"})
 
-	eval := &engine.DelegationEvaluator{Store: st}
+	eval := &engine.DelegationEvaluator{Store: &engine.StoreBackend{Store: st}}
 	pol := delegPolicy()
 	sess := &session.Session{ID: "deleg-sess", AgentName: "child-agent"}
 
@@ -190,7 +190,7 @@ func TestDelegationEvaluator_ShadowMode(t *testing.T) {
 
 	pip := engine.New(
 		&engine.MayUseEvaluator{},
-		&engine.DelegationEvaluator{Store: st},
+		&engine.DelegationEvaluator{Store: &engine.StoreBackend{Store: st}},
 	)
 	call := &engine.ToolCall{
 		SessionID:   "shadow-deleg-sess",
@@ -227,7 +227,7 @@ func BenchmarkDelegationEvaluator(b *testing.B) {
 	}
 	registerParentForBench(b, st, "bench-parent", tools)
 
-	eval := &engine.DelegationEvaluator{Store: st}
+	eval := &engine.DelegationEvaluator{Store: &engine.StoreBackend{Store: st}}
 	pol := &policy.Policy{
 		EnforcementMode: policy.EnforcementBlock,
 		MayUse:          tools,

@@ -2,13 +2,11 @@ package engine
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 
 	"github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/session"
-	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // DelegationEvaluator enforces that child agents cannot exceed the tool
@@ -30,7 +28,7 @@ import (
 type DelegationEvaluator struct {
 	// Store is the data access layer used to load the parent agent's current
 	// allowed tool list. Must be non-nil before any call to Evaluate.
-	Store *store.Store
+	Store QueryBackend
 }
 
 // Evaluate returns Allow for root agents (call.ParentAgent == ""). For child
@@ -50,9 +48,9 @@ func (e *DelegationEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *ses
 		return Decision{Action: Allow}, nil
 	}
 
-	parent, err := e.Store.GetAgent(call.ParentAgent)
+	parentTools, err := e.Store.GetAgentAllowedTools(call.ParentAgent)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, ErrParentAgentNotFound) {
 			return Decision{}, fmt.Errorf(
 				"parent agent %q not found in agents table; child agent %q cannot be authorised",
 				call.ParentAgent, call.AgentName,
@@ -61,14 +59,6 @@ func (e *DelegationEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *ses
 		return Decision{}, fmt.Errorf(
 			"loading parent agent %q for delegation check on behalf of %q: %w",
 			call.ParentAgent, call.AgentName, err,
-		)
-	}
-
-	parentTools, err := parent.AllowedTools()
-	if err != nil {
-		return Decision{}, fmt.Errorf(
-			"decoding allowed_tools for parent agent %q: %w",
-			call.ParentAgent, err,
 		)
 	}
 

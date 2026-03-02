@@ -48,7 +48,7 @@
   - All directories: `cmd/policy/`, `cmd/audit/`, `cmd/session/`, `cmd/escalation/`,
     `cmd/agent/`, `policy-packs/fintech/`, `policy-packs/healthcare/`,
     `policy-packs/devops/`, `testdata/traces/`
-  **Notes:**
+    **Notes:**
   - All seven approved dependencies are marked `// indirect` because no source file imports
     them yet; they will become direct once Task 1.2 wires up cobra and viper.
   - `docs/mvp-plan.md` was already present; no copy needed.
@@ -85,7 +85,7 @@
   - `cmd/session/session.go`, `list.go`, `inspect.go`, `terminate.go`
   - `cmd/escalation/escalation.go`, `list.go`, `approve.go`, `reject.go`
   - `cmd/agent/agent.go`, `register.go`, `list.go`
-  **Notes:**
+    **Notes:**
   - Subcommand groups (`cmd/policy/`, `cmd/audit/`, etc.) are separate Go packages imported
     by `package main` in `cmd/`. Package names match the directory name (e.g., `package policy`,
     `package audit`) for clean import-site readability.
@@ -127,7 +127,7 @@
   - `internal/store/testing.go` — `NewTestDB(t *testing.T) *Store` using unique named in-memory DSNs
   - `internal/store/store_test.go` — 7 tests (50 subtests): all tables exist, all columns present,
     WAL/foreign-key PRAGMAs set, migrate is idempotent, NewTestDB isolation, FK constraint enforced
-  **Notes:**
+    **Notes:**
   - `modernc.org/sqlite` and `github.com/google/uuid` were added to `go.mod`/`go.sum` (both approved
     dependencies from CLAUDE.md). uuid was pulled in transitively by modernc.org/sqlite.
   - `Store.db` has `SetMaxOpenConns(1)` to prevent "database is locked" errors from concurrent
@@ -165,7 +165,7 @@
     plus unexported `writePrivateKey` and `writePublicKey` helpers
   - `internal/identity/keypair_test.go` — 6 tests: round-trip, sign/verify, file permissions
     (both .pem and .pub.pem), not-found errors for both loaders, keys directory creation
-  **Notes:**
+    **Notes:**
   - Private key is encoded as PKCS8 PEM (type `"PRIVATE KEY"`); public key as PKIX PEM
     (type `"PUBLIC KEY"`). These match the formats used by `crypto/x509` stdlib functions
     `MarshalPKCS8PrivateKey` / `ParsePKCS8PrivateKey` and `MarshalPKIXPublicKey` /
@@ -203,7 +203,7 @@
   - `internal/identity/jwt_test.go` — 6 tests: round-trip (all fields), expired rejection, tampered
     signature rejection, wrong-key rejection, missing-agent-claim rejection, expiry-duration correctness
   - `go.mod` / `go.sum` — `github.com/golang-jwt/jwt/v5 v5.3.1` added (approved dependency from CLAUDE.md)
-  **Notes:**
+    **Notes:**
   - Signing method is locked to `jwt.SigningMethodEdDSA` inside the key function passed to
     `jwt.ParseWithClaims`. Any token presenting a different `alg` header is rejected before the
     key function returns, preventing algorithm-confusion attacks (e.g., `alg: none`, HMAC variants).
@@ -244,7 +244,7 @@
   - `cmd/agent/list.go` — replaced stub; tabwriter table with name, policy, tool count, registered, expires
   - `cmd/agent/list_test.go` — NEW: white-box tests for unexported `jwtExpiry` helper (valid + 6 invalid cases)
   - `testdata/minimal.policy.yaml` — NEW: minimal 3-tool policy fixture for manual and future integration tests
-  **Notes:**
+    **Notes:**
   - `minimalPolicy` struct in `register.go` parses only `may_use: []string`. The full parser is Phase 2
     (Task 2.1). A `// Design:` comment explains the intentional scope limit.
   - `resolveDBPath(tbHome string)` is defined in `register.go` and shared with `list.go` within the
@@ -308,7 +308,7 @@
     minimal policy, malformed YAML, missing version, missing agent, file-not-found, disk reads,
     fingerprint whitespace stability, fingerprint content sensitivity, source-path exclusion from
     fingerprint, and nil-slice normalization.
-  **Notes:**
+    **Notes:**
   - `EscalateRule.Value` is `interface{}` per the plan's §6.2 type definition. This is the only
     use of `interface{}` in the policy layer; CLAUDE.md §12 prohibits it in `internal/engine/` (the
     evaluation pipeline), not in the policy parsing layer.
@@ -353,9 +353,9 @@
     `TestLint_L013_MessageFormat` (exact message structure), `TestLint_CleanPolicy` (zero results),
     `TestLint_SeverityValues` (string constants), `TestLint_AllValidOperatorsPassL012` (8 operators).
   - `internal/policy/types.go` — MODIFIED: added `EscalationConfig` struct and `Escalation
-    *EscalationConfig` field to `Policy`. Uses pointer + `json:",omitempty"` so policies that omit
+  *EscalationConfig` field to `Policy`. Uses pointer + `json:",omitempty"` so policies that omit
     the `escalation:` block produce identical fingerprints to pre-2.2 policies.
-  **Notes:**
+    **Notes:**
   - L013 uses three-colour DFS (white/gray/black), not Kahn's algorithm. DFS was chosen because it
     naturally reconstructs the full cycle path without a separate pass — when a back edge is detected,
     the current DFS stack IS the cycle. Kahn's algorithm detects cycles but does not reconstruct paths.
@@ -368,6 +368,7 @@
     to keep each rule function self-contained and independently testable.
   - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
     35/35 lint tests pass; 11/11 pre-existing parser tests still pass.
+
 ---
 
 - [x] **Task 2.3** — `cmd/policy`: wire up all four policy commands
@@ -401,7 +402,7 @@
     `sameEscalateRule` (7 cases), `printLintResults` (colour + empty), `printExplain`
     (minimal policy + all-sections policy), `printDiff` (no-change, mode change, added/removed
     tools, budget change, predicate change)
-  **Notes:**
+    **Notes:**
   - All output functions take an `io.Writer` parameter (populated by `cmd.OutOrStdout()` in cobra
     RunE) so they can be tested via `bytes.Buffer` without capturing os.Stdout.
   - ANSI colour codes are raw escape sequences (`\033[31m` etc.) defined as package-level constants
@@ -467,7 +468,7 @@
   - `testdata/policies/regulatory-multi-approval.policy.yaml` — NEW: regulatory-agent; block mode;
     only_after 4-step chain [draft_document, medical_review, legal_review, qa_review];
     requires_prior_n {tool: qa_review, count: 2}. EU AI Act Article 9 pattern. Zero WARNINGs.
-  **Notes:**
+    **Notes:**
   - All five files exit 0 from `policy validate` and `policy lint`.
   - Expected WARNINGs (not ERRORs): L008 on three files (escalation webhook not configured —
     test fixtures do not include production webhook URLs) and L009 on fintech (shadow mode).
@@ -517,7 +518,7 @@
     `TestParseRequest_IDPreservation` (3 cases — string/numeric/null IDs preserved as raw JSON).
   - `pkg/mcpparse/parse_fuzz_test.go` — NEW: `FuzzParseRequest` with 9 seed corpus entries
     covering valid, invalid, and edge-case inputs.
-  **Notes:**
+    **Notes:**
   - `IsTool` is a package-level function (not a method on `MCPRequest`) to match the plan's
     `mvp-plan.md §7.1` signature exactly. The plan shows both a method and a function variant;
     the function form was chosen so proxy code can call `mcpparse.IsTool(r)` without needing
@@ -551,7 +552,7 @@
   - `internal/proxy/traceheaders.go` — NEW: `tracingHeaders` slice (priority-ordered), `ExtractClientTraceID`
   - `internal/proxy/traceheaders_test.go` — NEW: 12 table-driven subtests: one per header format,
     priority-ordering cases (first wins), all-five-present, unrecognised header, empty-value header
-  **Notes:**
+    **Notes:**
   - `ExtractClientTraceID` is a pure package-level function with no side effects and no logging,
     matching the plan's §9.1a signature exactly.
   - Preserving the header name in the return value (`"<name>=<value>"`) disambiguates same numeric
@@ -595,7 +596,7 @@
     `AuthMiddleware` to look up the agent's public key by name extracted from the unverified JWT payload.
   - `internal/proxy/traceheaders.go`, `internal/proxy/traceheaders_test.go` — MODIFIED: mechanical
     `gofmt` whitespace fix (comment alignment) left from Task 3.2; no logic change.
-  **Notes:**
+    **Notes:**
   - The two-step decode (unverified name → DB key lookup → full signature verify) is the standard
     pattern for public-key JWT systems. A `// Design:` comment in `unverifiedAgentClaim` explains why
     the unverified decode is safe: an attacker who fabricates the agent name gets "not registered" or
@@ -611,8 +612,8 @@
 ---
 
 - [x] **Task 3.4** — `internal/proxy`: session ID middleware
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `internal/proxy/session.go` — NEW: `sessionIDKey` context constant, `SessionIDFromContext`,
     `SessionMiddleware`, unexported helpers `isToolCall`, `writeMissingSessionID`, `writeBadRequest`
   - `internal/proxy/session_test.go` — NEW: 9 test functions (8 middleware integration tests +
@@ -620,7 +621,7 @@
     tools/list missing header → forwarded, tools/call with header → session ID in context,
     non-JSON body forwarded, empty body forwarded, body restored for downstream handler,
     400 response format, non-tool method gets no context value, isToolCall helper cases
-  **Notes:**
+    **Notes:**
   - `sessionIDKey contextKey = 1` — explicit constant (not iota) to avoid collision with
     `claimsKey = 0` defined in auth.go. A comment in session.go explains the numeric choice.
   - Session ID is stored in context only when enforcement fires (i.e. on tool calls), not when
@@ -632,7 +633,7 @@
     session enforcement. The upstream MCP server handles any resulting protocol errors.
   - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
     35/35 proxy tests pass; full suite clean.
-      **Scope:**
+    **Scope:**
   - Implement `internal/proxy/session.go`:
     - Middleware that reads `X-TrueBearing-Session-ID` from the request headers.
     - Only enforces on `tools/call` requests (check method after parsing MCP body, or check header universally — see note below).
@@ -682,7 +683,7 @@
     Reuses `registerTestAgent` and `mintTestToken` helpers from `auth_test.go`.
   - `cmd/serve.go` — replaced stub; loads policy with `policy.ParseFile`, opens store, creates proxy,
     starts `http.ListenAndServe`. Added `serveResolveDBPath` helper. Fails fast on missing policy or DB.
-  **Notes:**
+    **Notes:**
   - `New()` accepts `*policy.Policy` in addition to `*url.URL` and `*store.Store`. The spec shows
     `New(upstream, store)` but the policy is required for the health endpoint (Task 3.5a) and the
     evaluation pipeline (Task 4.8). Accepting it here keeps the constructor testable without a filesystem.
@@ -744,7 +745,7 @@
   - `internal/store/store.go` — MODIFIED: added `Ping() error` method delegating to `db.Ping()`.
   - `cmd/serve.go` — MODIFIED: passes `dbPath` as fourth argument to `proxy.New()` so the health
     response displays the correct database path.
-  **Notes:**
+    **Notes:**
   - `http.NewServeMux` is used in `Handler()` so `/health` is explicitly registered before the
     auth chain — no conditional logic inside middleware. `"/"` is the catch-all and routes
     everything else through `AuthMiddleware → SessionMiddleware → handleMCP`.
@@ -800,7 +801,7 @@
   - `internal/engine/pipeline_test.go` — NEW: 16 tests across 4 test functions:
     `TestPipeline_Evaluate` (12 table-driven cases), `TestPipeline_FirstFailureStopsExecution`,
     `TestPipeline_ErrorReasonContainsOriginalError`, `TestPipeline_ShadowDenyPreservesRuleID`
-  **Notes:**
+    **Notes:**
   - `ToolCall.ArgumentsMap map[string]interface{}` from `mvp-plan.md §8.1` was omitted.
     CLAUDE.md §12 prohibits `interface{}` in the evaluation pipeline. A `// Design:` comment
     in `types.go` explains the decision. Evaluators will use gjson on `Arguments json.RawMessage`
@@ -818,8 +819,8 @@
 ---
 
 - [x] **Task 4.2** — `internal/store`: session CRUD methods
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `internal/store/sessions.go` — NEW: `CreateSession`, `GetSession`, `UpdateSessionTaint`,
     `IncrementSessionCounters`, `TerminateSession`; all return wrapped `sql.ErrNoRows` for
     missing sessions; `IncrementSessionCounters` uses a single atomic UPDATE expression
@@ -832,7 +833,7 @@
     (5 events = seqs 1–5), seq verified via GetSessionEvents, RecordedAt auto-set when zero, explicit
     RecordedAt preserved, nullable field round-trip, full field round-trip, empty events, ordering by seq,
     session isolation (independent seq per session), CountSessionEvents tracking, and max_history detectable
-  **Notes:**
+    **Notes:**
   - `GetSession` returns `*session.Session` (from `internal/session`). Store imports session; no import cycle
     because session imports nothing from store.
   - `UpdateSessionTaint`, `IncrementSessionCounters`, and `TerminateSession` all check `RowsAffected == 0`
@@ -846,7 +847,8 @@
   - `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all exit clean.
     37 store tests pass (7 pre-existing schema + 5 pre-existing agent + 3 agent_tools + 11 session + 12 event).
 
-      **Scope:**
+    **Scope:**
+
   - Implement in `internal/store/sessions.go`:
     - `CreateSession(id, agentName, policyFingerprint string) error`.
     - `GetSession(id string) (*Session, error)`.
@@ -890,7 +892,7 @@
   - `internal/engine/mayuse_test.go` — NEW: `TestMayUseEvaluator` (7 table-driven cases),
     `TestMayUseEvaluator_ShadowMode` (pipeline-level shadow conversion verification),
     `BenchmarkMayUseEvaluator` (50-tool list, worst-case last-entry hit)
-  **Notes:**
+    **Notes:**
   - `virtualEscalationTool = "check_escalation_status"` is an unexported constant in `mayuse.go`
     scoped to the engine package. It guards the unconditional allow path. No domain logic.
   - Linear scan over `pol.MayUse` is intentional — typical lists are ≤ 50 entries and the slice is
@@ -930,7 +932,7 @@
   - `internal/engine/budget_test.go` — NEW: `TestBudgetEvaluator` (12 table-driven cases),
     `TestBudgetEvaluator_ShadowMode` (pipeline-level shadow conversion verification),
     `BenchmarkBudgetEvaluator` (well-within-limits session, common hot path)
-  **Notes:**
+    **Notes:**
   - Zero-valued `BudgetPolicy` (both `MaxToolCalls == 0` and `MaxCostUSD == 0`) fast-paths to
     Allow immediately. Individual limits set to 0 are treated as "not configured" for that limit
     only, allowing the other limit to still be enforced independently.
@@ -982,7 +984,7 @@
     mutation tests: `TestPipeline_TaintMutation_AppliesOnAllow`,
     `TestPipeline_TaintMutation_ClearsOnAllow`, `TestPipeline_TaintMutation_NoMutationOnDeny`,
     `TestPipeline_TaintMutation_NoMutationOnShadowDeny`, `TestPipeline_TaintMutation_PlainToolNoMutation`
-  **Notes:**
+    **Notes:**
   - Taint check logic: when session is tainted, first check if the tool has `taint.clears == true`
     (allow — clearance path); then build the set of taint-applying tools from the policy; then check
     if the tool's `never_after` list intersects that set (deny if so). If the policy has no
@@ -1029,7 +1031,7 @@
     all predicate paths; `TestSequenceEvaluator_AllViolationsReported` (4 simultaneous violations);
     `TestSequenceEvaluator_StoreError` (error propagation, fail-closed); `TestSequenceEvaluator_ShadowMode`
     (pipeline-level shadow conversion); `BenchmarkSequenceEvaluator` (1000-event history).
-  **Notes:**
+    **Notes:**
   - `SequenceEvaluator` stores a `*store.Store` field passed at construction time, consistent with
     the pipeline pattern (`engine.New(&SequenceEvaluator{Store: myStore})`).
   - Only events with `decision == "allow"` or `decision == "shadow_deny"` are counted as history.
@@ -1084,7 +1086,7 @@
     `TestEscalationEvaluator_StoreError`, `TestEscalationEvaluator_ShadowMode`,
     `TestEscalationEvaluator_InvalidRegex`, `BenchmarkEscalationEvaluator`.
   - `go.mod` / `go.sum` — `github.com/tidwall/gjson v1.18.0` added (approved dependency from CLAUDE.md).
-  **Notes:**
+    **Notes:**
   - JSONPath normalisation: the policy DSL uses `$.field` notation; gjson uses `field` (no `$` sigil).
     `strings.TrimPrefix(path, "$.")` strips the prefix so both `$.amount_usd` and `amount_usd` work
     identically. A path that becomes empty after stripping is returned as an error (fail closed).
@@ -1104,17 +1106,17 @@
 ---
 
 - [x] **Task 4.8** — `internal/engine`: wire full pipeline into proxy; integration tests
-  **Status:** Complete
-  **Files:** `internal/proxy/proxy.go`, `internal/engine/integration_test.go`
-  **Notes:** Replaced the `TODO(task-4.1)` stub in `handleMCP` with full pipeline wiring
-  (MayUse → Budget → Taint → Sequence → Escalation). The pipeline is constructed in
-  `proxy.New()` so the SequenceEvaluator and EscalationEvaluator receive the shared
-  `*store.Store`. After each pipeline call the handler: appends a session event (pipeline
-  invariant 1), persists any taint mutation to the DB (fail-closed if update fails), increments
-  session counters on Allow/ShadowDeny, creates an escalation record on Escalate, and either
-  forwards to upstream (Allow/ShadowDeny) or returns a synthetic JSON-RPC response (Deny/Escalate).
-  Session creation is implicit on first tool call; policy fingerprint is bound at creation time
-  (Fix 3 from mvp-plan.md §14). Terminated sessions return 410 Gone.
+      **Status:** Complete
+      **Files:** `internal/proxy/proxy.go`, `internal/engine/integration_test.go`
+      **Notes:** Replaced the `TODO(task-4.1)` stub in `handleMCP` with full pipeline wiring
+      (MayUse → Budget → Taint → Sequence → Escalation). The pipeline is constructed in
+      `proxy.New()` so the SequenceEvaluator and EscalationEvaluator receive the shared
+      `*store.Store`. After each pipeline call the handler: appends a session event (pipeline
+      invariant 1), persists any taint mutation to the DB (fail-closed if update fails), increments
+      session counters on Allow/ShadowDeny, creates an escalation record on Escalate, and either
+      forwards to upstream (Allow/ShadowDeny) or returns a synthetic JSON-RPC response (Deny/Escalate).
+      Session creation is implicit on first tool call; policy fingerprint is bound at creation time
+      (Fix 3 from mvp-plan.md §14). Terminated sessions return 410 Gone.
 
   Design note on healthcare `TestPHITaintPropagation`: after `run_compliance_scan` clears the
   taint, TaintEvaluator passes but SequenceEvaluator still denies `submit_claim` because
@@ -1154,8 +1156,8 @@
   **Satisfaction check:**
   - `go test ./internal/audit/...` passes.
   - A record with a tampered field fails `Verify`.
-  **Status:** Complete
-  **Files:**
+    **Status:** Complete
+    **Files:**
   - `internal/audit/record.go` — `AuditRecord` struct (new)
   - `internal/audit/sign.go` — `Sign`, `Verify`, `canonicalJSON` (new)
   - `internal/audit/writer.go` — `Write` (new)
@@ -1164,7 +1166,7 @@
   - `internal/store/audit.go` — `AppendAuditRecord` store write method (new)
   - `internal/store/schema.go` — added `agent_name TEXT NOT NULL` and `decision_reason TEXT`
     columns to `audit_log` table (modified)
-  **Notes:**
+    **Notes:**
   - `AuditRecord` lives in `internal/audit`; `internal/store` does not import `internal/audit`
     to avoid a circular dependency. `AppendAuditRecord` accepts individual field parameters
     rather than a struct pointer.
@@ -1210,8 +1212,8 @@
 ---
 
 - [x] **Task 5.3** — `cmd/audit`: wire up `audit verify`, `audit query`, `audit replay`
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `cmd/audit/verify.go` — full implementation: `--key` flag (default `~/.truebearing/keys/proxy.pub.pem`),
     JSONL scanner with 1 MiB per-line buffer, JSON decode to `internalaudit.AuditRecord` (aliased
     to avoid package name conflict with `cmd/audit`), `audit.Verify()` per line, OK/TAMPERED output,
@@ -1231,7 +1233,7 @@
     (single session, multiple sessions preserving order, empty input), `writeQueryTable` (no records,
     with records, long reason truncation), `writeQueryJSON` (empty slice, with record), `writeQueryCSV`
     (header always present, with record).
-  **Notes:**
+    **Notes:**
   - `cmd/audit` is package `audit`; `internal/audit` is also package `audit`. The import alias
     `internalaudit "github.com/mercator-hq/truebearing/internal/audit"` is used in `verify.go`
     to avoid the collision. `replay.go` defines a local `auditLogLine` struct (mirroring
@@ -1283,7 +1285,7 @@
   - `testdata/traces/payment-sequence-violation.trace.jsonl` — NEW: 3-entry trace with
     read_invoice → verify_invoice → execute_wire_transfer (amount_usd: 500) where the
     third call is missing manager_approval.
-  **Notes:**
+    **Notes:**
   - Trace file format: one JSON object per line with fields `session_id`, `agent_name`,
     `tool_name`, `arguments` (raw JSON object), `requested_at` (RFC3339, optional).
     This is distinct from the audit log format (which has only SHA-256 of arguments).
@@ -1349,7 +1351,7 @@
     args preview). Validates `--status` flag values.
   - `cmd/escalation/approve.go` — MODIFIED: replaced stub; opens DB, calls `escalation.Approve`.
   - `cmd/escalation/reject.go` — MODIFIED: replaced stub; opens DB, calls `escalation.Reject`.
-  **Notes:**
+    **Notes:**
   - The `check_escalation_status` interception happens before session fingerprint and termination
     checks intentionally. The virtual tool is stateless with respect to session policy — it only
     reads the escalations table. Requiring a valid session would prevent agents from polling after
@@ -1363,8 +1365,8 @@
 ---
 
 - [x] **Task 5.5a** — Escalation webhook notifications
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `internal/escalation/notify.go` — NEW: `NotifyConfig` struct and `Notify` function.
   - `internal/escalation/notify_test.go` — NEW: 3 tests covering webhook fires, webhook failure not fatal, stdout fallback.
   - `internal/proxy/proxy.go` — MODIFIED: `engine.Escalate` case now calls `escalation.Notify` after persisting the escalation record.
@@ -1449,7 +1451,7 @@
   - `sdks/python/tests/test_proxy.py` — 21 tests covering session ID generation, JWT resolution
     from all three sources, header injection into Anthropic clients, subprocess lifecycle
     (args, output suppression, context manager exit, idempotent shutdown), and timeout.
-  **Notes:**
+    **Notes:**
   - SDK has zero runtime dependencies — stdlib only (`os`, `socket`, `subprocess`, `time`,
     `urllib`, `uuid`, `pathlib`). anthropic/openai SDKs are detected at runtime via
     try/import so the package stays lightweight and does not pin SDK versions.
@@ -1632,10 +1634,10 @@
   **Files:**
   - `policy-packs/fintech/payments-safety.policy.yaml`
   - `policy-packs/fintech/README.md`
-  **Notes:** Policy demonstrates all major DSL features: only_after, never_after, requires_prior_n,
-  taint.applies, taint.clears, escalate_when, tool-level enforcement_mode: block override. Starts in
-  shadow mode; README documents the 1-week shadow → block onboarding path. Passes `policy lint` with
-  zero ERRORs (L008 webhook warning and L009 shadow-mode info are expected for a starter template).
+    **Notes:** Policy demonstrates all major DSL features: only_after, never_after, requires_prior_n,
+    taint.applies, taint.clears, escalate_when, tool-level enforcement_mode: block override. Starts in
+    shadow mode; README documents the 1-week shadow → block onboarding path. Passes `policy lint` with
+    zero ERRORs (L008 webhook warning and L009 shadow-mode info are expected for a starter template).
 
 ---
 
@@ -1649,11 +1651,11 @@
   **Files:**
   - `policy-packs/healthcare/hipaa-phi-guard.policy.yaml`
   - `policy-packs/healthcare/README.md`
-  **Notes:** Uses enforcement_mode: block at global level (unlike fintech which uses shadow) because
-  PHI disclosure is not safe to observe-and-allow. Guards both submit_claim and export_report with
-  never_after: [read_phi], demonstrating the multi-tool exfiltration block pattern. README includes
-  a note that this policy is one technical control and does not replace a formal HIPAA compliance
-  programme. Passes `policy lint` with zero ERRORs.
+    **Notes:** Uses enforcement_mode: block at global level (unlike fintech which uses shadow) because
+    PHI disclosure is not safe to observe-and-allow. Guards both submit_claim and export_report with
+    never_after: [read_phi], demonstrating the multi-tool exfiltration block pattern. README includes
+    a note that this policy is one technical control and does not replace a formal HIPAA compliance
+    programme. Passes `policy lint` with zero ERRORs.
 
 ---
 
@@ -1667,11 +1669,11 @@
   **Files:**
   - `policy-packs/devops/production-guard.policy.yaml`
   - `policy-packs/devops/README.md`
-  **Notes:** Environment isolation via `require_env:` is not yet in the DSL (post-MVP feature, listed
-  in MEMORY.md deferred items). The policy instead uses sequence guards, force-push taint isolation,
-  and escalation-on-every-production-deploy (escalate_when with == "production"). README explicitly
-  documents the `require_env:` gap and provides the interim infrastructure-level workaround (separate
-  proxy instances, separate JWTs per environment). Passes `policy lint` with zero ERRORs.
+    **Notes:** Environment isolation via `require_env:` is not yet in the DSL (post-MVP feature, listed
+    in MEMORY.md deferred items). The policy instead uses sequence guards, force-push taint isolation,
+    and escalation-on-every-production-deploy (escalate_when with == "production"). README explicitly
+    documents the `require_env:` gap and provides the interim infrastructure-level workaround (separate
+    proxy instances, separate JWTs per environment). Passes `policy lint` with zero ERRORs.
 
 ---
 
@@ -1698,7 +1700,7 @@
     makes a tool call, queries `store.QueryAuditLog`, asserts exactly one record with
     correct fields, and verifies the Ed25519 signature via `audit.Verify`.
   - `internal/proxy/health_test.go` — updated two `New(...)` calls to pass `nil` signing key.
-  **Notes:**
+    **Notes:**
   - Audit record is written right after `AppendEvent` (before the taint-update and switch
     blocks) so `event.Seq` is available and invariant 1 is satisfied regardless of which
     decision branch runs.
@@ -1725,7 +1727,7 @@
     `audit query --format json | audit verify` pipeline. Updated the presenter note to reflect
     that proxy wiring is now complete (Task 8.1).
   - `cmd/init_test.go` — gofmt-only (pre-existing formatting issue, no logic change).
-  **Notes:**
+    **Notes:**
   - No other package depended on PascalCase JSON marshaling of `store.AuditRecord`. The struct is
     only marshaled to JSON in `writeQueryJSON`; all other usages read individual fields by name.
   - `omitempty` on `decision_reason` and `client_trace_id` matches `audit.AuditRecord` so that
@@ -1740,7 +1742,7 @@
       **Status:** Complete
       **Files:** `cmd/audit/export.go` (new), `cmd/audit/audit.go` (register command),
       `cmd/audit/audit_test.go` (4 new tests + seedAuditRecord helper), `docs/demo-script.md`
-  **Notes:**
+      **Notes:**
   - `cmd/audit/export.go` adds `newExportCommand()` (cobra subcommand) and `writeExport()`
     (testable inner function that takes `*store.Store`, `store.AuditFilter`, `io.Writer`).
   - Reuses `buildAuditFilter` from `query.go` (passing empty strings for unused tool/decision/
@@ -1784,7 +1786,7 @@
   - `internal/proxy/proxy.go` — added `traceWriter *TraceWriter` field, `SetTraceWriter` method, `writeTraceEntry` helper. `handleMCP` now captures `requestedAt := time.Now()` before DB operations and calls `p.writeTraceEntry(...)` immediately after extracting session/agent context, before the pipeline runs. `time.Now()` reused in `ToolCall` struct.
   - `internal/proxy/proxy_test.go` — added `TestProxy_CaptureTrace_WritesEntries`: creates a temp trace file, makes 2 tool calls through a live test proxy, asserts exactly 2 JSONL lines with correct `session_id`, `agent_name`, `tool_name`, and non-empty `requested_at`.
   - `cmd/serve.go` — removed "not yet implemented" warning; added `NewTraceWriter` call + `SetTraceWriter` wiring + deferred `Close`; prints `capture-trace` path in startup banner.
-      **Notes:**
+    **Notes:**
   - `check_escalation_status` is intentionally excluded from trace capture — it is a TrueBearing-internal virtual tool and is not replayed by `truebearing simulate`.
   - The TraceWriter uses `os.OpenFile(O_CREATE|O_APPEND|O_WRONLY, 0600)` — no userspace buffering. After each `Write` syscall the data is in the kernel buffer; goroutine panics and OOM kills cannot lose the last entry. `fsync` on every write was not added (advisory trace file, not authoritative audit log).
   - Both allowed and denied calls are captured (write happens before `p.pipeline.Evaluate`). Terminated-session and policy-fingerprint-conflict calls are also captured because the trace write precedes those checks.
@@ -1805,7 +1807,7 @@
   - `cmd/serve.go` — removed "not yet implemented" early return; added stdio branch that reads
     `TRUEBEARING_AGENT_JWT` from the environment, prints startup banner to stderr (stdout is
     reserved for JSON-RPC), and calls `p.ServeStdio(cmd.Context(), os.Stdin, os.Stdout, jwtToken)`.
-      **Notes:**
+    **Notes:**
   - `ServeStdio` reuses the full HTTP handler chain (`AuthMiddleware → SessionMiddleware → handleMCP`)
     by constructing a synthetic `*http.Request` per JSON-RPC line. All auth, session, evaluation,
     and audit logic is shared — no duplication for the stdio transport.
@@ -1837,7 +1839,7 @@
   - `internal/policy/lint_test.go` — added `TestLint_L014`, `TestLint_L015`, `TestLint_L015_NonPatternOperators`
   - `internal/proxy/proxy.go` — wired `ContentEvaluator{}` between `SequenceEvaluator` and `EscalationEvaluator` in the pipeline
   - `testdata/policies/fintech-payment-sequence.policy.yaml` — added `never_when` predicate on `execute_wire_transfer` demonstrating `contains_pattern` with `/pattern/` notation
-  **Notes:**
+    **Notes:**
   - Pipeline order: MayUse → Budget → Taint → Sequence → **Content** → Escalation.
     Content runs after Sequence (session-state checks) and before Escalation (argument-threshold pausing),
     because content violations are hard blocks that should not trigger the escalation flow.
@@ -1864,7 +1866,7 @@
   - `internal/policy/lint_test.go` — added `TestLint_L016` with 4 cases (set, absent, empty string, staging)
   - `policy-packs/devops/production-guard.policy.yaml` — removed "post-MVP" note; added `require_env: production` to session block
   - `policy-packs/devops/README.md` — removed infrastructure-workaround section; replaced with `require_env` feature documentation and `--env` registration examples; added env isolation row to rule table
-  **Notes:**
+    **Notes:**
   - Pipeline order is now: **Env** → MayUse → Budget → Taint → Sequence → Content → Escalation.
     EnvEvaluator runs before MayUse because a wrong-environment agent has no business executing
     any tool regardless of which tool is being called — the session itself is invalid for that agent.
@@ -1880,8 +1882,8 @@
 ---
 
 - [x] **Task 9.3** — `rate_limit:` per-tool call frequency enforcement
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `internal/policy/types.go` — added `RateLimitPolicy` struct; added `RateLimit *RateLimitPolicy` field to `ToolPolicy`
   - `internal/store/events.go` — added `CountSessionEventsSince(sessionID, toolName string, since time.Time) (int, error)`
   - `internal/engine/ratelimit.go` — new `RateLimitEvaluator`
@@ -1931,7 +1933,7 @@
   - `docs/demo-script.md` — added optional Act 7 (Jaeger integration) with Docker run
     command, startup output, span attribute listing, and Q&A answer updated from
     "on the roadmap" to "yes, here is how."
-      **Notes:**
+    **Notes:**
   - Used `otlptracehttp` (not the older `otlphttp` path mentioned in the TODO spec) — the
     current canonical import path under the OTel Go SDK v1.x.
   - `emitDecisionSpan` marks deny and shadow_deny spans with `codes.Error` so dashboards
@@ -2089,8 +2091,8 @@
 ---
 
 - [x] **Task 12.1** — `truebearing agent revoke`: agent credential revocation
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `cmd/agent/revoke.go` — new; `truebearing agent revoke <name>` command
   - `cmd/agent/agent.go` — wired `newRevokeCommand()`; updated Long description
   - `cmd/agent/list.go` — added STATUS column; shows "active" or "REVOKED <timestamp>"
@@ -2110,13 +2112,13 @@
   - `internal/proxy/auth_test.go` — added `TestAuthMiddleware_RevokedAgent_Returns401`,
     `TestAuthMiddleware_RevokedAgent_OtherAgentUnaffected`,
     `TestAuthMiddleware_ReRegisteredAgent_ClearsRevocation`
-  **Notes:** Revocation check runs before PEM parse and JWT sig verification — this is
-  intentional. An attacker whose agent is revoked still presents a syntactically valid JWT;
-  blocking early avoids wasting a crypto operation. The check is on every request (not only
-  session creation) so revocation takes effect for sessions that started before the revoke.
-  Re-registering an agent (`UpsertAgent`) writes `revoked_at = NULL`, restoring access — this
-  is the intended credential renewal path. All tests pass; `go vet`, `gofmt`, and
-  `go build ./...` are clean.
+    **Notes:** Revocation check runs before PEM parse and JWT sig verification — this is
+    intentional. An attacker whose agent is revoked still presents a syntactically valid JWT;
+    blocking early avoids wasting a crypto operation. The check is on every request (not only
+    session creation) so revocation takes effect for sessions that started before the revoke.
+    Re-registering an agent (`UpsertAgent`) writes `revoked_at = NULL`, restoring access — this
+    is the intended credential renewal path. All tests pass; `go vet`, `gofmt`, and
+    `go build ./...` are clean.
 
 ---
 
@@ -2140,7 +2142,7 @@
   - `internal/proxy/proxy.go` — wired `DelegationEvaluator{Store: st}` into pipeline (after MayUse),
     populated `call.ParentAgent` from JWT claims, added `buildDelegationChain` helper,
     updated `writeAuditRecord` signature to accept and populate `DelegationChain`
-  **Notes:**
+    **Notes:**
   - `AgentClaims` already had `ParentAgent` and `ParentAllowed` fields from the plan; the task
     added the runtime enforcement that was missing.
   - `DelegationEvaluator` loads parent tools from the agents table (live check) rather than the
@@ -2156,13 +2158,13 @@
 ---
 
 - [x] **Task 12.3** — Policy hot-reload via SIGHUP
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `internal/proxy/proxy.go` — replaced `pol *policy.Policy` field with `polMu sync.RWMutex`, `livePol *policy.Policy`, and `polByFingerprint map[string]*policy.Policy`; added `currentPolicy()`, `policyForFingerprint()`, `ReloadPolicy()` methods; updated `handleMCP` to look up session-bound policy by fingerprint instead of hard-conflict-checking; updated `writeAuditRecord` to accept fingerprint as a parameter.
   - `internal/proxy/health.go` — updated `handleHealth` to read the live policy via `p.currentPolicy()`.
   - `cmd/serve.go` — added SIGHUP goroutine using `os/signal` and `syscall.SIGHUP`; calls `p.ReloadPolicy()` on signal and logs success or failure.
   - `internal/proxy/reload_test.go` — 5 new tests covering: fingerprint update on /health, existing sessions use old policy, lint-error reload is rejected, parse-error reload is rejected, empty SourcePath returns error.
-  **Notes:**
+    **Notes:**
   - Used `sync.RWMutex` over `sync/atomic` because the protected value is a struct pointer plus a map, which cannot be swapped atomically as a unit.
   - The fingerprint conflict check (Fix 3, mvp-plan.md §14) is replaced by a fingerprint registry lookup. If the session's policy version is still in `polByFingerprint`, the call is evaluated using that version. A 409 Conflict is only returned when the proxy was restarted and the old policy version is no longer in memory.
   - All loaded policy versions are retained in `polByFingerprint` for the lifetime of the proxy process. For MVP this is fine; at GitOps push cadence the number of retained versions stays small.
@@ -2171,18 +2173,99 @@
 ---
 
 - [x] **Task 12.4** — Structured JSON logging via `log/slog`
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `internal/engine/pipeline.go` — added `*slog.Logger` field + `SetLogger()` method; debug-level evaluator chain logging inside `Evaluate()` loop using `fmt.Sprintf("%T", ev)` for evaluator name
   - `internal/proxy/proxy.go` — added `logger *slog.Logger` field (default: discard); `SetLogger()` wires same logger to pipeline; replaced all 11 `log.Printf` calls with `p.logger.{Error,Warn}Context()`; added info-level "tool call evaluated" decision log in `handleMCP` with `session_id`, `agent`, `tool`, `decision`, `rule_id`, `trace_id`, `arguments_sha256`
   - `cmd/serve.go` — added `--log-level <debug|info|warn|error>` flag (default `info`); initialises `slog.NewJSONHandler(os.Stderr, ...)` writing to stderr; calls `slog.SetDefault(logger)` and `p.SetLogger(logger)`; SIGHUP goroutine migrated from `log.Printf` to `logger.{Error,Info}`; `parseLogLevel()` helper added at bottom of file
   - `internal/proxy/logging_test.go` — two new table-driven tests: `TestProxy_DecisionLog_ValidJSONWithRequiredFields` (asserts every log line is valid JSON, all required fields present, `arguments_sha256` present, raw argument key absent) and `TestProxy_DecisionLog_DenialIncludesRuleID` (asserts deny decision populates `rule_id`)
-  **Notes:**
+    **Notes:**
   - No new dependencies — `log/slog` is stdlib since Go 1.21 (module uses Go 1.25).
   - `slog.DiscardHandler` (Go 1.24+) used as default so tests and library callers see no log output unless `SetLogger` is called.
   - The SIGHUP goroutine logging in `cmd/serve.go` (outside `internal/proxy/`) was also migrated from `log.Printf` to `slog` so the satisfaction check (`truebearing serve 2>&1 | jq .`) holds for all log output.
   - Debug-level evaluator chain logging uses `fmt.Sprintf("%T", ev)` (e.g. `*engine.MayUseEvaluator`) — does not change the `Evaluator` interface and has no performance cost at info/warn/error levels (slog handler skips below-threshold records before any allocation).
   - `arguments_sha256` is computed independently in `handleMCP` for logging and in `writeAuditRecord` for the audit record — two cheap SHA256 calls per request, acceptable overhead.
+
+---
+
+## Phase 13 — Known Gaps (Pre-Sales / Pitch Accuracy)
+
+> **Goal:** Close the remaining gaps between pitch materials and working code, and complete
+> manual distribution steps required before the first real install from a design partner.
+> These are the only items that stand between the current codebase and a clean first technical evaluation.
+
+---
+
+- [x] **Task 13.1** — WASM-compiled policy engine
+  **Status:** Complete
+  **Files:**
+  - `internal/engine/backend.go` — new: `QueryBackend` interface, `SessionEventEntry`, `ApprovedEscalationEntry`, `ErrParentAgentNotFound`
+  - `internal/engine/storebackend.go` — new: `StoreBackend` adapter (build-tagged `!wasip1 && !(js && wasm)`)
+  - `internal/engine/membackend.go` — new: `MemBackend` in-memory implementation for WASM + tests
+  - `internal/engine/membackend_test.go` — new: tests for all `MemBackend` methods
+  - `internal/engine/sequence.go` — modified: `Store *store.Store` → `Store QueryBackend`
+  - `internal/engine/ratelimit.go` — modified: same
+  - `internal/engine/escalation.go` — modified: same
+  - `internal/engine/delegation.go` — modified: same; uses `ErrParentAgentNotFound` instead of `sql.ErrNoRows`
+  - `internal/proxy/proxy.go` — modified: evaluators now use `&engine.StoreBackend{Store: st}`
+  - `cmd/audit/replay.go` — modified: same
+  - `cmd/simulate.go` — modified: same
+  - `cmd/wasm/core.go` — new: shared `evaluateCore()` logic (build tag: `js || wasip1`)
+  - `cmd/wasm/main_js.go` — new: `GOOS=js GOARCH=wasm` entry point (`syscall/js`)
+  - `cmd/wasm/main_wasi.go` — new: `GOOS=wasip1 GOARCH=wasm` stdin/stdout entry point
+  - `sdks/node/truebearing.wasm` — new: pre-built `js/wasm` binary for Node.js
+  - `sdks/node/src/wasm_engine.ts` — new: `WasmEngine` class (load + evaluate + evaluateSerialized)
+  - `sdks/node/src/wasm_engine.test.ts` — new: correctness + benchmark tests
+  - `sdks/node/src/index.ts` — modified: exports `WasmEngine` and its types
+  - `docs/demo-script.md` — modified: WASM FAQ entry with build commands and latency numbers
+  - Engine test files (`sequence_test.go`, `ratelimit_test.go`, `escalation_test.go`, `delegation_test.go`, `integration_test.go`) — modified: `Store: st` → `Store: &engine.StoreBackend{Store: st}`
+  **Notes:**
+  - The `StoreBackend` adapter is excluded from WASM builds via `//go:build !wasip1 && !(js && wasm)` on `storebackend.go`. This breaks the `internal/engine` → `internal/store` → `modernc.org/sqlite` transitive dependency for WASM targets.
+  - The WASM entry point uses `GOOS=js GOARCH=wasm` for the Node.js shim (synchronous function call via `syscall/js`). The `GOOS=wasip1 GOARCH=wasm` target is also buildable (stdin/stdout JSON loop) — `GOOS=wasip1 GOARCH=wasm go build -o truebearing-wasi.wasm ./cmd/wasm/` exits 0.
+  - `cmd/wasm/core.go` has build tag `//go:build js || wasip1` so `go build ./...` (native) skips the package cleanly.
+  - Measured latency (Apple M1, Node.js): typical session (50 events): p50=0.33ms, p99=1.7ms. Stress (1000 events): p50=4.5ms, p99 non-deterministic due to Go WASM GC pauses at ~65KB JSON per call.
+  - `WasmEngine.evaluateSerialized()` is the high-performance API for callers that cache the session JSON between mutations. The primary 5ms guarantee applies to typical sessions.
+  - All 31 Node.js tests pass (`npm test`). All Go tests pass (`go test ./...`). Both WASM binaries build clean.
+
+---
+
+- [ ] **Task 13.2** — Homebrew formula SHA256: replace placeholder before first tagged release
+  **Priority:** P0 — blocks `brew install` from working. The formula at [Formula/truebearing.rb](Formula/truebearing.rb) has a placeholder `000...000` SHA256 hash. Any user who follows the Homebrew install path will get a checksum mismatch error.
+  **Scope:**
+  - Tag a release (`v0.1.0` or the agreed first release tag) and let the CI release workflow build the four binary archives.
+  - For each platform archive, run `sha256sum truebearing_<os>_<arch>.tar.gz` and record the hash.
+  - Update `Formula/truebearing.rb`: replace the placeholder `sha256` lines with the real hashes for each `url`/`sha256` pair.
+  - Smoke-test on a clean macOS machine: `brew tap mercator-hq/truebearing <repo-url> && brew install mercator-hq/truebearing/truebearing`.
+  **Satisfaction check:**
+  - `brew install` completes without checksum error on macOS arm64 and amd64.
+  - The installed binary reports the correct version via `truebearing --version` (add a `--version` flag if not present).
+  **Note:** This task cannot be completed until a GitHub Release is tagged and the CI release workflow has run. It is a blocking dependency on cutting the first public release.
+
+---
+
+- [ ] **Task 13.3** — PyPI name reservation: confirm `truebearing` is available and reserve it
+  **Priority:** P0 — blocks `pip install truebearing` from working for anyone who is not us. If the name is taken by a squatter or an unrelated project, the publish workflow (Task 11.3) will fail on the first `twine upload`.
+  **Scope:**
+  - Check `https://pypi.org/project/truebearing/` — if taken, evaluate alternatives (`truebearing-proxy`, `mercator-truebearing`) and update `sdks/python/pyproject.toml` and the README accordingly.
+  - If available: publish a `v0.0.1` placeholder release to reserve the name before the full SDK is ready. The placeholder can be a single `__init__.py` with a `raise ImportError("truebearing is not yet released — check back soon")`.
+  - Confirm the `PYPI_TOKEN` secret is added to the GitHub repository settings (required by the publish workflow).
+  - Run the publish workflow manually (`workflow_dispatch` or push a `sdk/python/v0.0.1` tag) to verify end-to-end.
+  **Satisfaction check:**
+  - `pip install truebearing` succeeds on a clean machine and installs the Mercator package (not an unrelated project).
+  - The publish CI workflow exits 0 on a test tag.
+
+---
+
+- [ ] **Task 13.4** — npm org scope: create `@mercator` org and reserve `@mercator/truebearing`
+  **Priority:** P0 — blocks `npm install @mercator/truebearing` from working. Scoped npm packages require the org (`@mercator`) to exist and the publishing account to be a member.
+  **Scope:**
+  - Create the `@mercator` org on `npmjs.com` (or verify it already exists and the account has publish access).
+  - Publish a `v0.0.1` placeholder package to reserve `@mercator/truebearing`. The placeholder can export `throw new Error("not yet released")`.
+  - Add `NPM_TOKEN` secret to the GitHub repository settings (required by the publish workflow in Task 11.4).
+  - Run the publish workflow manually (push `sdk/node/v0.0.1` tag) to verify the CI path is correct end-to-end.
+  **Satisfaction check:**
+  - `npm install @mercator/truebearing` succeeds on a clean machine and installs the Mercator package.
+  - The publish CI workflow exits 0 on a test tag.
 
 ---
 

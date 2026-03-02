@@ -258,7 +258,7 @@ func TestRateLimitEvaluator(t *testing.T) {
 			// Each sub-test gets its own session ID so events don't bleed across tests.
 			localSID := fmt.Sprintf("%s-%s", sid, strings.ReplaceAll(tc.name, " ", "-"))
 			localSt := rlStore(t, localSID)
-			eval := &engine.RateLimitEvaluator{Store: localSt}
+			eval := &engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: localSt}}
 
 			// Build the policy.
 			var pol *policy.Policy
@@ -340,7 +340,7 @@ func TestRateLimitEvaluator_ShadowMode(t *testing.T) {
 	pol := rlPolicy("search_web", 3, 60)
 	pol.EnforcementMode = policy.EnforcementShadow
 
-	pip := engine.New(&engine.RateLimitEvaluator{Store: st})
+	pip := engine.New(&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}})
 	call := rlCall(sid, "search_web", now)
 	sess := rlSess(sid)
 
@@ -370,7 +370,7 @@ func TestRateLimitEvaluator_StoreError(t *testing.T) {
 		t.Fatalf("closing store: %v", err)
 	}
 
-	eval := &engine.RateLimitEvaluator{Store: st}
+	eval := &engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}}
 	pol := rlPolicy("search_web", 3, 60)
 	call := rlCall(sid, "search_web", time.Now())
 
@@ -385,7 +385,7 @@ func TestRateLimitEvaluator_StoreError(t *testing.T) {
 func TestRateLimitEvaluator_RequestedAtFallback(t *testing.T) {
 	const sid = "sess-rl-fallback"
 	st := rlStore(t, sid)
-	eval := &engine.RateLimitEvaluator{Store: st}
+	eval := &engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}}
 	pol := rlPolicy("search_web", 3, 60)
 
 	// Zero RequestedAt — should fall back to time.Now() and allow (no history).
@@ -464,7 +464,7 @@ func BenchmarkRateLimitEvaluator(b *testing.B) {
 			},
 		},
 	}
-	eval := &engine.RateLimitEvaluator{Store: st}
+	eval := &engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}}
 	sess := &session.Session{ID: sid, AgentName: "bench-agent"}
 	call := &engine.ToolCall{
 		SessionID:   sid,

@@ -167,9 +167,9 @@ func evaluateAllSessions(
 		&engine.MayUseEvaluator{},
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
-		&engine.SequenceEvaluator{Store: st},
-		&engine.RateLimitEvaluator{Store: st},
-		&engine.EscalationEvaluator{Store: st},
+		&engine.SequenceEvaluator{Store: &engine.StoreBackend{Store: st}},
+		&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}},
+		&engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}},
 	)
 
 	var allResults []simulateResult

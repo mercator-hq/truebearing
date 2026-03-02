@@ -310,7 +310,7 @@ func TestSequenceEvaluator(t *testing.T) {
 				seedEvent(t, st, sid, h.tool, h.decision)
 			}
 
-			eval := &engine.SequenceEvaluator{Store: st}
+			eval := &engine.SequenceEvaluator{Store: &engine.StoreBackend{Store: st}}
 			call := &engine.ToolCall{
 				SessionID: sid,
 				AgentName: "test-agent",
@@ -362,7 +362,7 @@ func TestSequenceEvaluator_AllViolationsReported(t *testing.T) {
 		},
 	}
 
-	eval := &engine.SequenceEvaluator{Store: st}
+	eval := &engine.SequenceEvaluator{Store: &engine.StoreBackend{Store: st}}
 	call := &engine.ToolCall{SessionID: sid, ToolName: "target"}
 	got, err := eval.Evaluate(context.Background(), call, seqSess(sid), pol)
 	if err != nil {
@@ -401,7 +401,7 @@ func TestSequenceEvaluator_StoreError(t *testing.T) {
 	}
 
 	pol := seqPolicy("target-tool", []string{"prereq-tool"}, nil, nil)
-	eval := &engine.SequenceEvaluator{Store: st}
+	eval := &engine.SequenceEvaluator{Store: &engine.StoreBackend{Store: st}}
 	call := &engine.ToolCall{SessionID: sid, ToolName: "target-tool"}
 
 	_, evalErr := eval.Evaluate(context.Background(), call, seqSess(sid), pol)
@@ -421,7 +421,7 @@ func TestSequenceEvaluator_ShadowMode(t *testing.T) {
 	pol := seqPolicy("target-tool", []string{"prereq-tool"}, nil, nil)
 	pol.EnforcementMode = policy.EnforcementShadow
 
-	pip := engine.New(&engine.SequenceEvaluator{Store: st})
+	pip := engine.New(&engine.SequenceEvaluator{Store: &engine.StoreBackend{Store: st}})
 	call := &engine.ToolCall{SessionID: sid, AgentName: "test-agent", ToolName: "target-tool"}
 	got := pip.Evaluate(context.Background(), call, seqSess(sid), pol)
 	if got.Action != engine.ShadowDeny {
@@ -482,7 +482,7 @@ func BenchmarkSequenceEvaluator(b *testing.B) {
 		},
 	}
 
-	eval := &engine.SequenceEvaluator{Store: st}
+	eval := &engine.SequenceEvaluator{Store: &engine.StoreBackend{Store: st}}
 	sess := &session.Session{ID: sid, AgentName: "bench-agent"}
 	call := &engine.ToolCall{SessionID: sid, AgentName: "bench-agent", ToolName: "target-tool"}
 	ctx := context.Background()
