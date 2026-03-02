@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -50,6 +50,10 @@ type Proxy struct {
 	signingKey  ed25519.PrivateKey // nil means audit records are not signed or persisted
 	traceWriter *TraceWriter       // nil means trace capture is disabled
 	tracer      trace.Tracer       // no-op by default; replaced by SetTracer when OTel is configured
+	// logger is the structured slog logger used for all proxy log output.
+	// The default discards all output until SetLogger is called by cmd/serve.go
+	// after the --log-level flag is parsed.
+	logger *slog.Logger
 	// dbPath is stored for display in GET /health responses. It is the path
 	// that was passed to store.Open() and is not used for any DB operation
 	// inside the proxy itself.
@@ -107,7 +111,11 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 		dbPath:     dbPath,
 		// Default to a no-op tracer so emitDecisionSpan is always safe to call.
 		// SetTracer replaces this when OTel is configured via --otel-endpoint.
-		tracer:           noop.NewTracerProvider().Tracer("truebearing"),
+		tracer: noop.NewTracerProvider().Tracer("truebearing"),
+		// Default to a discard logger until SetLogger is called by cmd/serve.go.
+		// This prevents unexpected log output in tests and library callers that
+		// do not configure a log level.
+		logger:           slog.New(slog.DiscardHandler),
 		livePol:          pol,
 		polByFingerprint: map[string]*policy.Policy{pol.Fingerprint: pol},
 	}
@@ -214,6 +222,19 @@ func (p *Proxy) SetTracer(t trace.Tracer) {
 	p.tracer = t
 }
 
+// SetLogger installs a structured slog logger for proxy and pipeline log output.
+// Call this from cmd/serve.go after the --log-level flag is parsed and the
+// slog.Handler is initialized. The same logger is wired into the engine pipeline
+// so that debug-level evaluator chain logs appear in the same output stream as
+// the proxy's info-level decision logs.
+//
+// Per CLAUDE.md §8 security invariant 4: argument values must never appear in
+// log output. The decision log emits arguments_sha256 only.
+func (p *Proxy) SetLogger(l *slog.Logger) {
+	p.logger = l
+	p.pipeline.SetLogger(l)
+}
+
 // emitDecisionSpan records a single OTel span for one policy decision. The
 // span covers the period from request arrival to the moment the decision is
 // reached, and carries attributes that match the AuditRecord fields exactly so
@@ -305,7 +326,10 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		status, err := escalation.GetStatus(escID, p.st)
 		if err != nil {
-			log.Printf("proxy: check_escalation_status %q: %v", escID, err)
+			p.logger.ErrorContext(r.Context(), "check_escalation_status lookup failed",
+				"escalation_id", escID,
+				"error", err,
+			)
 			writeJSONRPCError(w, mcpReq.ID, "escalation not found", "escalation_not_found")
 			return
 		}
@@ -340,7 +364,10 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	sess, err := p.st.GetSession(sessionID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			log.Printf("proxy: looking up session %q: %v", sessionID, err)
+			p.logger.ErrorContext(r.Context(), "session lookup failed",
+				"session_id", sessionID,
+				"error", err,
+			)
 			writeBadRequest(w, "session lookup failed")
 			return
 		}
@@ -350,7 +377,10 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		// session creation.
 		livePol := p.currentPolicy()
 		if createErr := p.st.CreateSession(sessionID, claims.AgentName, livePol.Fingerprint); createErr != nil {
-			log.Printf("proxy: creating session %q: %v", sessionID, createErr)
+			p.logger.ErrorContext(r.Context(), "session creation failed",
+				"session_id", sessionID,
+				"error", createErr,
+			)
 			writeBadRequest(w, "session creation failed")
 			return
 		}
@@ -418,7 +448,11 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		PolicyRule:    decision.RuleID,
 	}
 	if appendErr := p.st.AppendEvent(event); appendErr != nil {
-		log.Printf("proxy: appending session event for session %q tool %q: %v", sessionID, params.Name, appendErr)
+		p.logger.ErrorContext(r.Context(), "session event append failed",
+			"session_id", sessionID,
+			"tool", params.Name,
+			"error", appendErr,
+		)
 		writeBadRequest(w, "session recording failed")
 		return
 	}
@@ -444,12 +478,34 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		ExtractClientTraceID(r.Header),
 	)
 
+	// Log the policy decision at info level. This is the primary structured log
+	// entry for each tool call and is the single source of truth for what
+	// happened and why. The required fields — session_id, agent, tool, decision,
+	// rule_id, trace_id — are included so log aggregators (Datadog, Splunk, etc.)
+	// can filter and correlate without additional joins.
+	//
+	// Per CLAUDE.md §8 security invariant 4: argument values are never logged.
+	// Only the sha256 of the raw arguments JSON is included for context.
+	argSum := sha256.Sum256(params.Arguments)
+	p.logger.InfoContext(r.Context(), "tool call evaluated",
+		"session_id", sessionID,
+		"agent", claims.AgentName,
+		"tool", params.Name,
+		"decision", string(decision.Action),
+		"rule_id", decision.RuleID,
+		"trace_id", ExtractClientTraceID(r.Header),
+		"arguments_sha256", hex.EncodeToString(argSum[:]),
+	)
+
 	// Persist taint state mutation if the pipeline changed sess.Tainted.
 	// Fail closed: if we cannot persist the new taint state, the session would
 	// be in an inconsistent state on the next call.
 	if sess.Tainted != taintBefore {
 		if taintErr := p.st.UpdateSessionTaint(sessionID, sess.Tainted); taintErr != nil {
-			log.Printf("proxy: updating session taint for %q: %v", sessionID, taintErr)
+			p.logger.ErrorContext(r.Context(), "session taint update failed",
+				"session_id", sessionID,
+				"error", taintErr,
+			)
 			writeBadRequest(w, "session state update failed")
 			return
 		}
@@ -464,7 +520,10 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 			// Counter failures are advisory: the call has already been evaluated
 			// and the session event written. Log and proceed so a bookkeeping
 			// failure does not block the agent's work.
-			log.Printf("proxy: incrementing counters for session %q: %v", sessionID, counterErr)
+			p.logger.WarnContext(r.Context(), "session counter increment failed",
+				"session_id", sessionID,
+				"error", counterErr,
+			)
 		}
 		p.rp.ServeHTTP(w, r)
 
@@ -485,7 +544,11 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 			Status:        "pending",
 		}
 		if escErr := p.st.CreateEscalation(esc); escErr != nil {
-			log.Printf("proxy: creating escalation for session %q tool %q: %v", sessionID, params.Name, escErr)
+			p.logger.ErrorContext(r.Context(), "escalation creation failed",
+				"session_id", sessionID,
+				"tool", params.Name,
+				"error", escErr,
+			)
 			// Fail closed: if we cannot record the escalation, deny the call
 			// rather than returning an escalated response with no backing record.
 			writeJSONRPCError(w, mcpReq.ID, "escalation could not be recorded", "internal_error")
@@ -519,7 +582,10 @@ func (p *Proxy) writeAuditRecord(
 	policyFingerprint string,
 ) {
 	if p.signingKey == nil {
-		log.Printf("proxy: no signing key loaded — audit record for session %q seq %d will not be persisted", sessionID, seq)
+		p.logger.WarnContext(r.Context(), "audit record not persisted: no signing key loaded",
+			"session_id", sessionID,
+			"seq", seq,
+		)
 		return
 	}
 
@@ -548,11 +614,19 @@ func (p *Proxy) writeAuditRecord(
 	}
 
 	if signErr := audit.Sign(rec, p.signingKey); signErr != nil {
-		log.Printf("proxy: signing audit record for session %q seq %d: %v", sessionID, seq, signErr)
+		p.logger.ErrorContext(r.Context(), "signing audit record failed",
+			"session_id", sessionID,
+			"seq", seq,
+			"error", signErr,
+		)
 		return
 	}
 	if writeErr := audit.Write(rec, p.st); writeErr != nil {
-		log.Printf("proxy: writing audit record for session %q seq %d: %v", sessionID, seq, writeErr)
+		p.logger.ErrorContext(r.Context(), "writing audit record failed",
+			"session_id", sessionID,
+			"seq", seq,
+			"error", writeErr,
+		)
 	}
 }
 
@@ -667,7 +741,10 @@ func (p *Proxy) writeTraceEntry(e TraceEntry) {
 		return
 	}
 	if err := p.traceWriter.WriteEntry(e); err != nil {
-		log.Printf("proxy: trace capture for tool %q: %v", e.ToolName, err)
+		p.logger.Warn("trace capture failed",
+			"tool", e.ToolName,
+			"error", err,
+		)
 	}
 }
 

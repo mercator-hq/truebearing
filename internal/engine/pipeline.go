@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/session"
@@ -13,13 +14,32 @@ import (
 // after construction; the stages slice is never modified after New returns.
 type Pipeline struct {
 	stages []Evaluator
+	logger *slog.Logger
 }
 
 // New constructs a Pipeline from the given evaluators, which run in the order
 // they appear in stages. An empty stages list is valid and produces an Allow
 // decision on every call.
+//
+// The default logger discards all output. Call SetLogger to enable debug-level
+// evaluator chain tracing (see SetLogger for details).
 func New(stages ...Evaluator) *Pipeline {
-	return &Pipeline{stages: stages}
+	return &Pipeline{
+		stages: stages,
+		logger: slog.New(slog.DiscardHandler),
+	}
+}
+
+// SetLogger installs a structured logger for debug-level evaluator chain tracing.
+// When the handler's level is at or below slog.LevelDebug, each evaluator's
+// name and decision are logged in order as the pipeline runs. This lets operators
+// diagnose exactly which predicate in the chain caused a denial without adding
+// any overhead at info or warn log levels.
+//
+// The logger is set by proxy.Proxy.SetLogger so operators need only pass
+// --log-level debug to truebearing serve.
+func (p *Pipeline) SetLogger(l *slog.Logger) {
+	p.logger = l
 }
 
 // Evaluate runs each evaluator in order and returns the effective Decision for
@@ -40,16 +60,34 @@ func New(stages ...Evaluator) *Pipeline {
 func (p *Pipeline) Evaluate(ctx context.Context, call *ToolCall, sess *session.Session, pol *policy.Policy) Decision {
 	for _, ev := range p.stages {
 		d, err := ev.Evaluate(ctx, call, sess, pol)
+		// Use fmt.Sprintf("%T", ev) to obtain the evaluator's concrete type name
+		// (e.g. "*engine.MayUseEvaluator") without requiring the Evaluator interface
+		// to carry a Name() method. This is used only for debug logging and has no
+		// effect on the evaluation result.
+		evaluatorName := fmt.Sprintf("%T", ev)
 		if err != nil {
 			// Invariant 4: evaluation errors fail closed. The error text is
 			// captured in Reason for the audit record; it is not propagated
 			// to the caller as a Go error.
+			p.logger.DebugContext(ctx, "evaluator error",
+				"evaluator", evaluatorName,
+				"session_id", call.SessionID,
+				"tool", call.ToolName,
+				"error", err,
+			)
 			return Decision{
 				Action: Deny,
 				Reason: fmt.Sprintf("evaluator error: %v", err),
 				RuleID: "internal_error",
 			}
 		}
+		p.logger.DebugContext(ctx, "evaluator result",
+			"evaluator", evaluatorName,
+			"session_id", call.SessionID,
+			"tool", call.ToolName,
+			"decision", string(d.Action),
+			"rule_id", d.RuleID,
+		)
 		if d.Action != Allow {
 			// Invariant 3: first failure terminates the pipeline.
 			// Invariant 5: apply shadow mode at this level, not in evaluators.

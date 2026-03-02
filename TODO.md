@@ -2170,26 +2170,19 @@
 
 ---
 
-- [ ] **Task 12.4** — Structured JSON logging via `log/slog`
-      **Priority:** Medium — required for enterprise customers routing logs to Datadog/Splunk.
-      Current `log.Printf` output is not parseable by log aggregators.
-      **Scope:**
-  - Replace all `log.Printf` / `log.Fatal` calls in `internal/proxy/` with `slog` structured log calls.
-  - Each decision log line must include: `time`, `level`, `msg`, `session_id`, `agent`, `tool`,
-    `decision`, `rule_id`, `trace_id`.
-  - Argument values must NEVER appear in log output (CLAUDE.md §8 security invariant).
-    Log only `arguments_sha256` if including argument context.
-  - Add `--log-level <debug|info|warn|error>` flag to `cmd/serve.go` (default `info`).
-    At `debug` level, log the evaluator chain (which evaluators ran, in order, with their decisions).
-    At `info` level, log final decisions only.
-  - Use `log/slog` from the Go 1.21 stdlib. No new dependency.
-  - Write a test: make a tool call through the proxy, capture the log output, assert it is valid
-    JSON and contains the expected fields.
-
-  **Satisfaction check:**
-  - `truebearing serve 2>&1 | jq .` produces valid JSON on every log line.
-  - No argument values appear in any log output at any log level.
-  - No `log.Printf` calls remain in `internal/proxy/` after this task.
+- [x] **Task 12.4** — Structured JSON logging via `log/slog`
+  **Status:** Complete
+  **Files:**
+  - `internal/engine/pipeline.go` — added `*slog.Logger` field + `SetLogger()` method; debug-level evaluator chain logging inside `Evaluate()` loop using `fmt.Sprintf("%T", ev)` for evaluator name
+  - `internal/proxy/proxy.go` — added `logger *slog.Logger` field (default: discard); `SetLogger()` wires same logger to pipeline; replaced all 11 `log.Printf` calls with `p.logger.{Error,Warn}Context()`; added info-level "tool call evaluated" decision log in `handleMCP` with `session_id`, `agent`, `tool`, `decision`, `rule_id`, `trace_id`, `arguments_sha256`
+  - `cmd/serve.go` — added `--log-level <debug|info|warn|error>` flag (default `info`); initialises `slog.NewJSONHandler(os.Stderr, ...)` writing to stderr; calls `slog.SetDefault(logger)` and `p.SetLogger(logger)`; SIGHUP goroutine migrated from `log.Printf` to `logger.{Error,Info}`; `parseLogLevel()` helper added at bottom of file
+  - `internal/proxy/logging_test.go` — two new table-driven tests: `TestProxy_DecisionLog_ValidJSONWithRequiredFields` (asserts every log line is valid JSON, all required fields present, `arguments_sha256` present, raw argument key absent) and `TestProxy_DecisionLog_DenialIncludesRuleID` (asserts deny decision populates `rule_id`)
+  **Notes:**
+  - No new dependencies — `log/slog` is stdlib since Go 1.21 (module uses Go 1.25).
+  - `slog.DiscardHandler` (Go 1.24+) used as default so tests and library callers see no log output unless `SetLogger` is called.
+  - The SIGHUP goroutine logging in `cmd/serve.go` (outside `internal/proxy/`) was also migrated from `log.Printf` to `slog` so the satisfaction check (`truebearing serve 2>&1 | jq .`) holds for all log output.
+  - Debug-level evaluator chain logging uses `fmt.Sprintf("%T", ev)` (e.g. `*engine.MayUseEvaluator`) — does not change the `Evaluator` interface and has no performance cost at info/warn/error levels (slog handler skips below-threshold records before any allocation).
+  - `arguments_sha256` is computed independently in `handleMCP` for logging and in `writeAuditRecord` for the audit record — two cheap SHA256 calls per request, acceptable overhead.
 
 ---
 

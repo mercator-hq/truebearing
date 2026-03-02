@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -28,6 +29,7 @@ func newServeCommand() *cobra.Command {
 		captureTrace string
 		stdio        bool
 		otelEndpoint string
+		logLevel     string
 	)
 
 	cmd := &cobra.Command{
@@ -82,6 +84,20 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 
 			p := proxy.New(upstreamURL, st, pol, dbPath, signingKey)
 
+			// Initialise structured JSON logging. The handler writes to stderr so
+			// that log output is separate from the human-readable startup banner on
+			// stdout and can be piped independently (e.g. truebearing serve 2>&1 | jq .).
+			// The log level is parsed from --log-level (default: info). At debug level
+			// the engine pipeline logs each evaluator's result in order, enabling
+			// fine-grained policy diagnosis without recompiling.
+			level, levelErr := parseLogLevel(logLevel)
+			if levelErr != nil {
+				return levelErr
+			}
+			logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+			slog.SetDefault(logger)
+			p.SetLogger(logger)
+
 			// Initialise OTel tracing. If --otel-endpoint is set (or
 			// OTEL_EXPORTER_OTLP_ENDPOINT is in the environment), spans are
 			// emitted per tool-call decision to the configured collector.
@@ -125,9 +141,14 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 					select {
 					case <-sighupCh:
 						if reloadErr := p.ReloadPolicy(); reloadErr != nil {
-							log.Printf("serve: policy reload failed -- previous policy remains active: %v", reloadErr)
+							logger.Error("policy reload failed — previous policy remains active",
+								"error", reloadErr,
+							)
 						} else {
-							log.Printf("serve: policy reloaded from %s  (%s)", policyPath, p.Policy().ShortFingerprint())
+							logger.Info("policy reloaded",
+								"path", policyPath,
+								"fingerprint", p.Policy().ShortFingerprint(),
+							)
 						}
 					case <-cmd.Context().Done():
 						signal.Stop(sighupCh)
@@ -176,8 +197,27 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 	cmd.Flags().StringVar(&captureTrace, "capture-trace", "", "write all MCP traffic to a JSONL trace file")
 	cmd.Flags().BoolVar(&stdio, "stdio", false, "accept MCP requests on stdin/stdout instead of HTTP")
 	cmd.Flags().StringVar(&otelEndpoint, "otel-endpoint", "", "OTLP HTTP endpoint for trace emission (e.g. http://localhost:4318); overrides OTEL_EXPORTER_OTLP_ENDPOINT")
+	cmd.Flags().StringVar(&logLevel, "log-level", "info", "log verbosity: debug, info, warn, error")
 
 	return cmd
+}
+
+// parseLogLevel converts a --log-level string to a slog.Level value. The four
+// accepted levels mirror the standard slog levels. "warning" is accepted as an
+// alias for "warn" to match common operator muscle memory.
+func parseLogLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf("unknown log level %q: must be one of debug, info, warn, error", s)
+	}
 }
 
 // serveResolveDBPath returns the SQLite database path for the serve command.
