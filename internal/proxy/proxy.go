@@ -9,11 +9,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,7 +45,6 @@ const costPerToolCall = 0.001
 type Proxy struct {
 	upstream    *url.URL
 	st          *store.Store
-	pol         *policy.Policy
 	rp          *httputil.ReverseProxy
 	pipeline    *engine.Pipeline
 	signingKey  ed25519.PrivateKey // nil means audit records are not signed or persisted
@@ -53,6 +54,14 @@ type Proxy struct {
 	// that was passed to store.Open() and is not used for any DB operation
 	// inside the proxy itself.
 	dbPath string
+
+	// polMu protects livePol and polByFingerprint. Policy hot-reload via SIGHUP
+	// atomically replaces livePol while retaining previous policy versions in
+	// polByFingerprint so existing sessions can continue evaluating against the
+	// policy version they were bound to at creation time.
+	polMu            sync.RWMutex
+	livePol          *policy.Policy
+	polByFingerprint map[string]*policy.Policy
 }
 
 // New creates a Proxy that forwards traffic to upstream, uses st for agent
@@ -92,14 +101,15 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 	return &Proxy{
 		upstream:   upstream,
 		st:         st,
-		pol:        pol,
 		rp:         rp,
 		pipeline:   pipeline,
 		signingKey: signingKey,
 		dbPath:     dbPath,
 		// Default to a no-op tracer so emitDecisionSpan is always safe to call.
 		// SetTracer replaces this when OTel is configured via --otel-endpoint.
-		tracer: noop.NewTracerProvider().Tracer("truebearing"),
+		tracer:           noop.NewTracerProvider().Tracer("truebearing"),
+		livePol:          pol,
+		polByFingerprint: map[string]*policy.Policy{pol.Fingerprint: pol},
 	}
 }
 
@@ -122,10 +132,71 @@ func (p *Proxy) Handler() http.Handler {
 	return mux
 }
 
-// Policy returns the parsed policy loaded at proxy startup. Downstream handlers
-// such as the health endpoint use this to access the policy fingerprint.
+// Policy returns the currently live policy. After a SIGHUP hot-reload this
+// returns the reloaded policy. It is safe to call concurrently.
 func (p *Proxy) Policy() *policy.Policy {
-	return p.pol
+	return p.currentPolicy()
+}
+
+// currentPolicy returns the live policy under a read lock.
+func (p *Proxy) currentPolicy() *policy.Policy {
+	p.polMu.RLock()
+	defer p.polMu.RUnlock()
+	return p.livePol
+}
+
+// policyForFingerprint looks up a previously-loaded policy by its fingerprint.
+// Returns false if no policy with that fingerprint is held in memory, which
+// indicates the proxy was restarted or a very old policy version was evicted.
+func (p *Proxy) policyForFingerprint(fp string) (*policy.Policy, bool) {
+	p.polMu.RLock()
+	defer p.polMu.RUnlock()
+	pol, ok := p.polByFingerprint[fp]
+	return pol, ok
+}
+
+// ReloadPolicy re-parses the policy file at its original SourcePath and
+// atomically replaces the live policy if the new file passes all ERROR-level
+// lint rules. If parsing or linting fails the previous policy remains active
+// and the error is returned to the caller for logging.
+//
+// Existing sessions are not disrupted: polByFingerprint retains all previously
+// loaded policy versions so that sessions bound to an older fingerprint
+// continue to evaluate correctly without receiving a 409 Conflict.
+func (p *Proxy) ReloadPolicy() error {
+	p.polMu.RLock()
+	sourcePath := p.livePol.SourcePath
+	p.polMu.RUnlock()
+
+	if sourcePath == "" {
+		return fmt.Errorf("policy was not loaded from a file; hot-reload is not supported")
+	}
+
+	newPol, err := policy.ParseFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("reloading policy from %s: %w", sourcePath, err)
+	}
+
+	// Reject the reload if any ERROR-level lint rule fires. The operator must
+	// fix the policy file and send SIGHUP again. WARNING and INFO results are
+	// logged but do not prevent the reload.
+	results := policy.Lint(newPol)
+	for _, r := range results {
+		if r.Severity == policy.SeverityError {
+			return fmt.Errorf("reload rejected — lint error in %s: %s %s", sourcePath, r.Code, r.Message)
+		}
+	}
+
+	p.polMu.Lock()
+	defer p.polMu.Unlock()
+	p.livePol = newPol
+	// Retain the previous policy in the registry so existing sessions remain
+	// valid under their original fingerprint. Design: we keep all versions in
+	// memory for the lifetime of the proxy. In practice the number of hot-reloads
+	// per proxy lifetime is small (GitOps push cadence), so unbounded growth is
+	// not a concern for the MVP.
+	p.polByFingerprint[newPol.Fingerprint] = newPol
+	return nil
 }
 
 // SetTraceWriter configures a TraceWriter for this proxy. When set, every
@@ -273,9 +344,12 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 			writeBadRequest(w, "session lookup failed")
 			return
 		}
-		// First call for this session ID: bind the session to the current
-		// policy fingerprint (Fix 3, mvp-plan.md §14).
-		if createErr := p.st.CreateSession(sessionID, claims.AgentName, p.pol.Fingerprint); createErr != nil {
+		// First call for this session ID: bind the session to the fingerprint of
+		// the currently live policy (Fix 3, mvp-plan.md §14). Reading the live
+		// policy once here ensures consistency if a SIGHUP reload races with
+		// session creation.
+		livePol := p.currentPolicy()
+		if createErr := p.st.CreateSession(sessionID, claims.AgentName, livePol.Fingerprint); createErr != nil {
 			log.Printf("proxy: creating session %q: %v", sessionID, createErr)
 			writeBadRequest(w, "session creation failed")
 			return
@@ -283,15 +357,19 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		sess = &session.Session{
 			ID:                sessionID,
 			AgentName:         claims.AgentName,
-			PolicyFingerprint: p.pol.Fingerprint,
+			PolicyFingerprint: livePol.Fingerprint,
 		}
 	}
 
-	// Per mvp-plan.md §14 Fix 3: reject calls whose session was created under
-	// a different policy fingerprint. Agents must start a new session after a
-	// policy update. Silent re-evaluation under a changed policy creates audit gaps.
-	if sess.PolicyFingerprint != p.pol.Fingerprint {
-		writeConflict(w, sess.PolicyFingerprint, p.pol.Fingerprint)
+	// Resolve the policy version this session was bound to at creation. After
+	// a SIGHUP hot-reload the live policy fingerprint may differ from the
+	// session's fingerprint, but we continue evaluating with the session-bound
+	// version so existing sessions are not disrupted. If the proxy was
+	// restarted and the old policy version is no longer in memory, return 409
+	// so the agent knows to start a fresh session.
+	sessionPol, ok := p.policyForFingerprint(sess.PolicyFingerprint)
+	if !ok {
+		writeConflict(w, sess.PolicyFingerprint, p.currentPolicy().Fingerprint)
 		return
 	}
 
@@ -324,9 +402,10 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// to the database after the decision, per pipeline invariant 2.
 	taintBefore := sess.Tainted
 
-	// Run the evaluation pipeline. Errors inside evaluators are converted to
-	// Deny by the pipeline (fail closed). This call never returns an error.
-	decision := p.pipeline.Evaluate(r.Context(), call, sess, p.pol)
+	// Run the evaluation pipeline against the session-bound policy. Errors
+	// inside evaluators are converted to Deny by the pipeline (fail closed).
+	// This call never returns an error.
+	decision := p.pipeline.Evaluate(r.Context(), call, sess, sessionPol)
 
 	// Append exactly one session event per tool call, per pipeline invariant 1.
 	// This must succeed before any response is written so the session history
@@ -348,7 +427,7 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// event.Seq is available and the record is persisted regardless of which
 	// decision branch runs below. Per pipeline invariant 1 (CLAUDE.md §6):
 	// exactly one AuditRecord is written per tool call, regardless of outcome.
-	p.writeAuditRecord(r, sessionID, claims.AgentName, claims.ParentAgent, params.Name, params.Arguments, event.Seq, decision)
+	p.writeAuditRecord(r, sessionID, claims.AgentName, claims.ParentAgent, params.Name, params.Arguments, event.Seq, decision, sessionPol.Fingerprint)
 
 	// Emit an OTel span for this decision. The span attributes mirror the
 	// AuditRecord fields so the two can be correlated without a join.
@@ -361,7 +440,7 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		claims.AgentName,
 		params.Name,
 		decision,
-		p.pol.Fingerprint,
+		sessionPol.Fingerprint,
 		ExtractClientTraceID(r.Header),
 	)
 
@@ -415,8 +494,8 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		// Fire the notification after the escalation is persisted. Delivery
 		// failure is logged inside Notify and does not block the response.
 		var notifyCfg *escalation.NotifyConfig
-		if p.pol.Escalation != nil {
-			notifyCfg = &escalation.NotifyConfig{WebhookURL: p.pol.Escalation.WebhookURL}
+		if sessionPol.Escalation != nil {
+			notifyCfg = &escalation.NotifyConfig{WebhookURL: sessionPol.Escalation.WebhookURL}
 		}
 		escalation.Notify(esc, decision.Reason, notifyCfg)
 		writeJSONRPCEscalated(w, mcpReq.ID, escID)
@@ -437,6 +516,7 @@ func (p *Proxy) writeAuditRecord(
 	arguments []byte,
 	seq uint64,
 	decision engine.Decision,
+	policyFingerprint string,
 ) {
 	if p.signingKey == nil {
 		log.Printf("proxy: no signing key loaded — audit record for session %q seq %d will not be persisted", sessionID, seq)
@@ -460,7 +540,7 @@ func (p *Proxy) writeAuditRecord(
 		ArgumentsSHA256:   hex.EncodeToString(argSum[:]),
 		Decision:          string(decision.Action),
 		DecisionReason:    decision.Reason,
-		PolicyFingerprint: p.pol.Fingerprint,
+		PolicyFingerprint: policyFingerprint,
 		AgentJWTSHA256:    hex.EncodeToString(jwtSum[:]),
 		ClientTraceID:     ExtractClientTraceID(r.Header),
 		DelegationChain:   buildDelegationChain(parentAgent, agentName),

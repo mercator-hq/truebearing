@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -109,6 +112,29 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 				}()
 				p.SetTraceWriter(tw)
 			}
+
+			// Listen for SIGHUP and reload the policy file atomically on receipt.
+			// A failed reload (parse error or lint ERROR) leaves the previous
+			// policy active; the error is logged so the operator can fix and retry.
+			// The goroutine exits when the context is cancelled (when serve returns),
+			// so it does not outlive the proxy.
+			sighupCh := make(chan os.Signal, 1)
+			signal.Notify(sighupCh, syscall.SIGHUP)
+			go func() {
+				for {
+					select {
+					case <-sighupCh:
+						if reloadErr := p.ReloadPolicy(); reloadErr != nil {
+							log.Printf("serve: policy reload failed -- previous policy remains active: %v", reloadErr)
+						} else {
+							log.Printf("serve: policy reloaded from %s  (%s)", policyPath, p.Policy().ShortFingerprint())
+						}
+					case <-cmd.Context().Done():
+						signal.Stop(sighupCh)
+						return
+					}
+				}
+			}()
 
 			if stdio {
 				// In stdio mode, stdout is reserved for JSON-RPC protocol messages.

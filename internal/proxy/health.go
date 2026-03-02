@@ -30,12 +30,14 @@ type healthResponse struct {
 // A 503 response signals a degraded state; the Reason field names the unhealthy
 // component.
 func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
+	pol := p.currentPolicy()
+
 	// Check that the policy source file is still accessible on disk. The proxy
 	// loaded and parsed it at startup; if it has since become unreadable, report
 	// degraded so operators know the running policy may diverge from disk.
 	// SourcePath is empty when policy was loaded from bytes (e.g. in tests).
-	if p.pol.SourcePath != "" {
-		if _, err := os.Stat(p.pol.SourcePath); err != nil {
+	if pol.SourcePath != "" {
+		if _, err := os.Stat(pol.SourcePath); err != nil {
 			writeHealthDegraded(w, "policy file unreadable")
 			return
 		}
@@ -49,8 +51,8 @@ func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	resp := healthResponse{
 		Status:            "ok",
-		PolicyFingerprint: p.pol.ShortFingerprint(),
-		PolicyFile:        p.pol.SourcePath,
+		PolicyFingerprint: pol.ShortFingerprint(),
+		PolicyFile:        pol.SourcePath,
 		ProxyVersion:      proxyVersion,
 		DBPath:            p.dbPath,
 	}

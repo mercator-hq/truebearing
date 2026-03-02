@@ -2155,25 +2155,18 @@
 
 ---
 
-- [ ] **Task 12.3** — Policy hot-reload via SIGHUP
-      **Priority:** Medium — required for GitOps-style deployments where policy files are version
-      controlled and updated without service restarts.
-      **Scope:**
-  - On `SIGHUP`, the proxy re-parses the policy file and re-runs `policy.Lint`. If any ERROR-level
-    lint rule fires, reject the reload; the previous policy remains active and a warning is logged.
-  - If the parse and lint succeed, update the in-memory policy pointer atomically (use `sync/atomic`
-    or a `sync.RWMutex`).
-  - Existing sessions retain the policy fingerprint they were created with. The engine must be
-    able to evaluate a call using the fingerprint stored in the session, not the current live policy.
-    This may require storing the parsed policy in the session store or matching by fingerprint.
-  - Update the `/health` endpoint to reflect the current live policy fingerprint.
-  - Write a test: send SIGHUP, assert `/health` returns a new fingerprint; assert a session created
-    before the reload still runs against the old policy.
-
-  **Satisfaction check:**
-  - Policy reloads without dropping in-flight connections.
-  - A broken reload (parse error, lint error) leaves the proxy serving the previous valid policy.
-  - `/health` fingerprint updates immediately after a successful reload.
+- [x] **Task 12.3** — Policy hot-reload via SIGHUP
+  **Status:** Complete
+  **Files:**
+  - `internal/proxy/proxy.go` — replaced `pol *policy.Policy` field with `polMu sync.RWMutex`, `livePol *policy.Policy`, and `polByFingerprint map[string]*policy.Policy`; added `currentPolicy()`, `policyForFingerprint()`, `ReloadPolicy()` methods; updated `handleMCP` to look up session-bound policy by fingerprint instead of hard-conflict-checking; updated `writeAuditRecord` to accept fingerprint as a parameter.
+  - `internal/proxy/health.go` — updated `handleHealth` to read the live policy via `p.currentPolicy()`.
+  - `cmd/serve.go` — added SIGHUP goroutine using `os/signal` and `syscall.SIGHUP`; calls `p.ReloadPolicy()` on signal and logs success or failure.
+  - `internal/proxy/reload_test.go` — 5 new tests covering: fingerprint update on /health, existing sessions use old policy, lint-error reload is rejected, parse-error reload is rejected, empty SourcePath returns error.
+  **Notes:**
+  - Used `sync.RWMutex` over `sync/atomic` because the protected value is a struct pointer plus a map, which cannot be swapped atomically as a unit.
+  - The fingerprint conflict check (Fix 3, mvp-plan.md §14) is replaced by a fingerprint registry lookup. If the session's policy version is still in `polByFingerprint`, the call is evaluated using that version. A 409 Conflict is only returned when the proxy was restarted and the old policy version is no longer in memory.
+  - All loaded policy versions are retained in `polByFingerprint` for the lifetime of the proxy process. For MVP this is fine; at GitOps push cadence the number of retained versions stays small.
+  - The SIGHUP goroutine exits cleanly when `cmd.Context()` is cancelled, preventing a goroutine leak after the serve command returns.
 
 ---
 
