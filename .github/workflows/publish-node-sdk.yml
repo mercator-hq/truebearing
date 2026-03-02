@@ -1,0 +1,43 @@
+name: Publish Node.js SDK
+
+on:
+  push:
+    tags:
+      # Trigger only on SDK-specific version tags, not the binary release tags.
+      # Example: sdk/node/v0.1.0
+      - 'sdk/node/v*'
+
+jobs:
+  publish:
+    name: Build and publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Setting registry-url causes setup-node to write an .npmrc that maps
+          # NODE_AUTH_TOKEN to the registry auth token. npm publish reads this
+          # automatically; no manual .npmrc editing is required.
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        working-directory: sdks/node
+        run: npm install
+
+      - name: Build
+        working-directory: sdks/node
+        run: npm run build
+
+      - name: Publish to npm
+        working-directory: sdks/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # --access public is required for scoped packages (@mercator/truebearing).
+        # Scoped packages default to restricted (private) access; this flag overrides that.
+        run: npm publish --access public

@@ -2048,7 +2048,7 @@
 
 ---
 
-- [ ] **Task 11.4** — npm automated publish via CI
+- [x] **Task 11.4** — npm automated publish via CI
       **Scope:**
   - Add `.github/workflows/publish-node-sdk.yml`:
     - Trigger: push of a tag matching `sdk/node/v*`.
@@ -2059,6 +2059,25 @@
   **Satisfaction check:**
   - Pushing `sdk/node/v0.1.0` publishes to npm automatically.
   - `npm install @mercator/truebearing` installs the published package on a clean machine.
+
+  **Status:** Complete
+  **Files:**
+  - `.github/workflows/publish-node-sdk.yml` — created
+
+  **Notes:**
+  - Workflow triggers on `sdk/node/v*` tags (distinct from `v*` binary release tags) so
+    Node SDK publishes are decoupled from Go binary releases and Python SDK releases.
+  - npm authentication uses the `actions/setup-node` approach with `registry-url`:
+    that action writes an `.npmrc` pointing to the registry and mapping `NODE_AUTH_TOKEN`
+    to the auth field. `NPM_TOKEN` is stored as a repository secret and passed as
+    `NODE_AUTH_TOKEN` in the publish step's `env` block — this is npm's canonical CI pattern.
+  - `--access public` is required for scoped packages (`@mercator/truebearing`); scoped
+    packages default to `restricted` (private) access and will fail to publish without this flag.
+  - Node version pinned to `20` (current LTS) to match the minimum expected runtime; tsc
+    build output is ES2022 + CJS (node16 module mode) so this is compatible.
+  - npm package name reservation (`@mercator/truebearing`) must be confirmed manually before
+    the first tag push — the org scope `@mercator` must exist and the publisher account must
+    be a member of it on the npm registry.
 
 ---
 
