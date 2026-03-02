@@ -20,15 +20,16 @@ import (
 // directory set to the package directory.
 const policyDir = "../../testdata/policies"
 
-// buildPipeline constructs the full five-stage evaluation pipeline wired to
-// the given store. This is the same ordering used by the proxy (MayUse →
-// Budget → Taint → Sequence → Escalation).
+// buildPipeline constructs the full evaluation pipeline wired to the given store.
+// This is the same ordering used by the proxy (MayUse → Budget → Taint →
+// Sequence → RateLimit → Escalation).
 func buildPipeline(st *store.Store) *engine.Pipeline {
 	return engine.New(
 		&engine.MayUseEvaluator{},
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
 		&engine.SequenceEvaluator{Store: st},
+		&engine.RateLimitEvaluator{Store: st},
 		&engine.EscalationEvaluator{Store: st},
 	)
 }

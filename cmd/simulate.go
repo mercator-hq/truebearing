@@ -168,6 +168,7 @@ func evaluateAllSessions(
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
 		&engine.SequenceEvaluator{Store: st},
+		&engine.RateLimitEvaluator{Store: st},
 		&engine.EscalationEvaluator{Store: st},
 	)
 

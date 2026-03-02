@@ -121,6 +121,7 @@ func runReplay(filePath, policyPath string, cmd *cobra.Command) error {
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
 		&engine.SequenceEvaluator{Store: st},
+		&engine.RateLimitEvaluator{Store: st},
 	)
 
 	groups := groupAuditBySession(records)

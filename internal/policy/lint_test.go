@@ -1298,6 +1298,184 @@ may_use:
 	}
 }
 
+// TestLint_L017 verifies that L017 fires when rate_limit.window_seconds is zero
+// or negative, and does not fire when window_seconds is a positive integer.
+func TestLint_L017(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantHit bool
+	}{
+		{
+			name: "window_seconds is zero - triggers L017",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 5
+      window_seconds: 0
+`,
+			wantHit: true,
+		},
+		{
+			name: "window_seconds is negative - triggers L017",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 5
+      window_seconds: -1
+`,
+			wantHit: true,
+		},
+		{
+			name: "window_seconds is positive - no L017",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 5
+      window_seconds: 60
+`,
+			wantHit: false,
+		},
+		{
+			name: "no rate_limit at all - no L017",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web: {}
+`,
+			wantHit: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseBytes(t, tc.yaml)
+			results := policy.Lint(p)
+			got := hasCode(results, "L017")
+			if got != tc.wantHit {
+				t.Errorf("L017 fired=%v, want %v (results: %v)", got, tc.wantHit, results)
+			}
+			if tc.wantHit {
+				for _, r := range results {
+					if r.Code == "L017" && r.Severity != policy.SeverityError {
+						t.Errorf("L017 severity = %q, want ERROR", r.Severity)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestLint_L018 verifies that L018 fires when rate_limit.max_calls is zero or
+// negative, and does not fire when max_calls is a positive integer.
+func TestLint_L018(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantHit bool
+	}{
+		{
+			name: "max_calls is zero - triggers L018",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 0
+      window_seconds: 60
+`,
+			wantHit: true,
+		},
+		{
+			name: "max_calls is negative - triggers L018",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: -5
+      window_seconds: 60
+`,
+			wantHit: true,
+		},
+		{
+			name: "max_calls is positive - no L018",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 10
+      window_seconds: 60
+`,
+			wantHit: false,
+		},
+		{
+			name: "no rate_limit at all - no L018",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web: {}
+`,
+			wantHit: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseBytes(t, tc.yaml)
+			results := policy.Lint(p)
+			got := hasCode(results, "L018")
+			if got != tc.wantHit {
+				t.Errorf("L018 fired=%v, want %v (results: %v)", got, tc.wantHit, results)
+			}
+			if tc.wantHit {
+				for _, r := range results {
+					if r.Code == "L018" && r.Severity != policy.SeverityError {
+						t.Errorf("L018 severity = %q, want ERROR", r.Severity)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestLint_L015_NonPatternOperators verifies that L015 only fires for
 // contains_pattern and is silent for other operators regardless of Value.
 func TestLint_L015_NonPatternOperators(t *testing.T) {

@@ -135,6 +135,33 @@ func (s *Store) GetSessionEvents(sessionID string) ([]SessionEvent, error) {
 	return events, nil
 }
 
+// CountSessionEventsSince returns the number of events for a specific tool in
+// the given session whose recorded_at timestamp is at or after since. Only
+// events with decision "allow" or "shadow_deny" count — calls that were denied
+// before reaching the upstream server must not penalise the agent's rate-limit
+// quota.
+//
+// Design: filtering by session_id, tool_name, and recorded_at in SQL keeps all
+// rate-limit logic out of Go and lets SQLite's B-tree index on (session_id, seq)
+// narrow the scan to a single session before applying the additional predicates.
+// For sessions capped at 1000 events (the default max_history), this scan is
+// well within the 2ms p99 evaluation target.
+func (s *Store) CountSessionEventsSince(sessionID, toolName string, since time.Time) (int, error) {
+	const query = `
+		SELECT COUNT(*)
+		FROM session_events
+		WHERE session_id = ?
+		  AND tool_name  = ?
+		  AND decision   IN ('allow', 'shadow_deny')
+		  AND recorded_at >= ?`
+	row := s.db.QueryRow(query, sessionID, toolName, since.UnixNano())
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting rate-limit events for session %q tool %q: %w", sessionID, toolName, err)
+	}
+	return count, nil
+}
+
 // CountSessionEvents returns the total number of events recorded for the given session.
 // This is used to detect when a session has reached the max_history policy limit before
 // attempting to append another event.

@@ -80,6 +80,8 @@ func Lint(p *Policy) []LintResult {
 	results = append(results, lintL014(p)...)
 	results = append(results, lintL015(p)...)
 	results = append(results, lintL016(p)...)
+	results = append(results, lintL017(p)...)
+	results = append(results, lintL018(p)...)
 	return results
 }
 
@@ -379,6 +381,50 @@ func lintL016(p *Policy) []LintResult {
 		}}
 	}
 	return nil
+}
+
+// lintL017 reports an error when rate_limit.window_seconds is zero or negative.
+// A non-positive window makes the predicate semantically undefined: every call
+// would be outside the window (window_seconds ≤ 0 means the since-threshold is
+// at or after the current time), so the rate limit would never trigger regardless
+// of how many calls were made. This is almost certainly a misconfiguration.
+func lintL017(p *Policy) []LintResult {
+	var results []LintResult
+	for toolName, tp := range p.Tools {
+		if tp.RateLimit != nil && tp.RateLimit.WindowSeconds <= 0 {
+			results = append(results, LintResult{
+				Code:     "L017",
+				Severity: SeverityError,
+				Message: fmt.Sprintf(
+					"tool %q: rate_limit.window_seconds must be a positive integer, got %d",
+					toolName, tp.RateLimit.WindowSeconds,
+				),
+			})
+		}
+	}
+	return results
+}
+
+// lintL018 reports an error when rate_limit.max_calls is zero or negative.
+// A non-positive max_calls makes every call to the tool an immediate deny,
+// which is equivalent to removing the tool from may_use entirely. Operators
+// who intend to disable a tool should remove it from may_use rather than
+// setting max_calls to zero or a negative value.
+func lintL018(p *Policy) []LintResult {
+	var results []LintResult
+	for toolName, tp := range p.Tools {
+		if tp.RateLimit != nil && tp.RateLimit.MaxCalls <= 0 {
+			results = append(results, LintResult{
+				Code:     "L018",
+				Severity: SeverityError,
+				Message: fmt.Sprintf(
+					"tool %q: rate_limit.max_calls must be a positive integer, got %d",
+					toolName, tp.RateLimit.MaxCalls,
+				),
+			})
+		}
+	}
+	return results
 }
 
 // lintL013 detects circular only_after dependencies that create permanent

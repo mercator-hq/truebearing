@@ -91,6 +91,25 @@ type ToolPolicy struct {
 	Taint        TaintPolicy        `yaml:"taint"         json:"taint"`
 	EscalateWhen *EscalateRule      `yaml:"escalate_when" json:"escalate_when"`
 	NeverWhen    []ContentPredicate `yaml:"never_when"    json:"never_when"`
+	RateLimit    *RateLimitPolicy   `yaml:"rate_limit"    json:"rate_limit,omitempty"`
+}
+
+// RateLimitPolicy sets a per-tool call frequency ceiling within a rolling
+// time window. A tool that exceeds max_calls within the past window_seconds
+// is denied until older calls drop off the window boundary.
+//
+// Both fields must be positive integers. Lint rule L017 (window_seconds ≤ 0)
+// and L018 (max_calls ≤ 0) enforce this at policy-authoring time.
+type RateLimitPolicy struct {
+	// MaxCalls is the maximum number of allowed calls within WindowSeconds.
+	// The limit is exclusive: a tool called max_calls times is still allowed;
+	// the (max_calls + 1)th call within the window is denied.
+	MaxCalls int `yaml:"max_calls" json:"max_calls"`
+
+	// WindowSeconds is the width of the rolling time window in seconds.
+	// Calls recorded more than this many seconds ago do not count toward
+	// the rate limit.
+	WindowSeconds int `yaml:"window_seconds" json:"window_seconds"`
 }
 
 // ContentPredicate defines a single content-based guard on a tool argument
