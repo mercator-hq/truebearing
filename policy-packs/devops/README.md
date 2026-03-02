@@ -16,6 +16,7 @@ container orchestrators, PaaS deployment APIs, or infrastructure-as-code runners
 
 | Rule | Type | Effect |
 |---|---|---|
+| `session.require_env: production` | Env isolation | Only agents registered with `--env production` may make tool calls |
 | `deploy_staging` requires `run_tests` + `build_artifact` | Sequence | No untested or unbuilt code reaches staging |
 | `run_integration_tests` requires `deploy_staging` | Sequence | Integration tests run against the staged artifact |
 | `deploy_production` requires full chain + `sign_off_deploy` | Sequence | Production deploy cannot skip any pipeline stage |
@@ -25,7 +26,7 @@ container orchestrators, PaaS deployment APIs, or infrastructure-as-code runners
 | `rollback_production` requires `open_incident_ticket` first | Sequence | Rollbacks are always traceable to an incident |
 | `deploy_production` at tool-level `block` | Enforcement override | Hard enforcement on production, even in global shadow mode |
 
-**Risk mitigated:** Production deploy before tests pass, deploy of unreviewed code, untracked rollbacks, accidental production promote by an agent in a bad state.
+**Risk mitigated:** Production deploy before tests pass, deploy of unreviewed code, untracked rollbacks, accidental production promote by an agent in a bad state, staging agent accidentally reaching a production MCP endpoint.
 
 ---
 
@@ -118,23 +119,39 @@ rollback_production:
 
 ---
 
-## Environment isolation (post-MVP)
+## Environment isolation
 
-A future TrueBearing DSL version will add the `require_env:` predicate, which blocks a tool
-from running unless the proxy was started with a matching `--env` flag:
+The `require_env:` session predicate restricts a policy to agents that were registered with a
+matching `--env` claim. A staging agent or an agent without any `--env` claim is denied by the
+`EnvEvaluator` before any tool-specific checks run.
 
 ```yaml
-# Post-MVP syntax — not yet available
-deploy_production:
+session:
   require_env: production
 ```
 
-Until then, enforce environment isolation at the infrastructure level:
+Register agents with the matching environment:
 
-- Run **separate proxy instances** for staging and production environments.
-- Use **separate policy files** per environment (e.g., `staging-guard.policy.yaml`, `production-guard.policy.yaml`).
-- Issue **separate agent JWTs** per environment. A JWT issued against a staging policy cannot be used with a production proxy.
-- Use your infrastructure's network controls to ensure the staging agent cannot reach the production MCP endpoint.
+```sh
+# Production agent — can execute tool calls in sessions governed by require_env: production
+truebearing agent register deploy-agent \
+  --policy ./production-guard.policy.yaml \
+  --env production
+
+# Staging agent — cannot reach production sessions; use a separate staging policy
+truebearing agent register deploy-agent-staging \
+  --policy ./staging-guard.policy.yaml \
+  --env staging
+```
+
+The `env` claim is embedded in the JWT at registration time and verified on every request. No
+database lookup is required — the comparison is a single string equality check in the
+`EnvEvaluator`, which runs first in the pipeline.
+
+**What gets denied:** any `tools/call` request from an agent whose `env` JWT claim does not
+exactly match the policy's `require_env` value, including agents registered without `--env`.
+The deny reason includes both the required value and the agent's actual claim, making
+misconfigurations easy to diagnose via `truebearing audit query --decision deny`.
 
 ---
 

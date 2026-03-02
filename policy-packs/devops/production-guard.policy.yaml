@@ -26,17 +26,18 @@
 #   5. Run in shadow mode against your staging pipeline first. Review:
 #      truebearing audit query --decision shadow_deny
 #   6. When satisfied, flip to enforcement_mode: block.
-#
-# Environment isolation note: a future DSL version will add require_env: production to prevent
-# production-scoped tools from running against a staging endpoint. Until then, enforce
-# environment separation at the infrastructure level (separate proxy instances per environment,
-# separate policy files, separate agent JWTs).
 
 version: "1"
 agent: deploy-agent
 enforcement_mode: shadow  # Flip to block once you have validated the sequence matches your pipeline.
 
 session:
+  # require_env ensures only agents registered with --env production can execute
+  # tool calls in this session. A staging agent or an agent registered without
+  # --env is denied by the EnvEvaluator before any other check runs.
+  # Register your production agent with:
+  #   truebearing agent register deploy-agent --policy ./production-guard.policy.yaml --env production
+  require_env: production
   max_history: 200          # Deploy sessions are short. If you hit 200 events something went wrong.
   max_duration_seconds: 3600 # 1-hour deploy window. Long-running deploy sessions are a red flag.
 

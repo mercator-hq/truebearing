@@ -52,8 +52,9 @@ type Proxy struct {
 // New creates a Proxy that forwards traffic to upstream, uses st for agent
 // authentication and session persistence, pol for policy evaluation, and
 // records dbPath for health responses. The full evaluation pipeline
-// (MayUse → Budget → Taint → Sequence → Escalation) is wired here so that
-// cmd/serve.go can validate the policy at startup before binding a port.
+// (Env → MayUse → Budget → Taint → Sequence → Content → Escalation) is
+// wired here so that cmd/serve.go can validate the policy at startup before
+// binding a port.
 //
 // signingKey is the Ed25519 private key used to sign audit records. Pass nil
 // if the key is unavailable — audit records will be logged but not persisted.
@@ -66,6 +67,9 @@ type Proxy struct {
 func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, signingKey ed25519.PrivateKey) *Proxy {
 	rp := httputil.NewSingleHostReverseProxy(upstream)
 	pipeline := engine.New(
+		// EnvEvaluator runs first: a wrong-environment agent has no business
+		// executing any tool in this session regardless of which tool is called.
+		&engine.EnvEvaluator{},
 		&engine.MayUseEvaluator{},
 		&engine.BudgetEvaluator{},
 		&engine.TaintEvaluator{},
@@ -243,11 +247,14 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// JSON so evaluators can use gjson to extract specific paths without a
 	// full unmarshal on every call. requestedAt was captured before the DB
 	// lookups above so the timestamp is consistent with the trace entry.
+	// AgentEnv is populated from the JWT "env" claim so the EnvEvaluator can
+	// compare it against the policy's require_env without a DB lookup.
 	call := &engine.ToolCall{
 		SessionID:   sessionID,
 		AgentName:   claims.AgentName,
 		ToolName:    params.Name,
 		Arguments:   params.Arguments,
+		AgentEnv:    claims.Env,
 		RequestedAt: requestedAt,
 	}
 

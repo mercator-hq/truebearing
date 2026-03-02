@@ -79,6 +79,7 @@ func Lint(p *Policy) []LintResult {
 	results = append(results, lintL013(p)...)
 	results = append(results, lintL014(p)...)
 	results = append(results, lintL015(p)...)
+	results = append(results, lintL016(p)...)
 	return results
 }
 
@@ -357,6 +358,27 @@ func lintL015(p *Policy) []LintResult {
 		}
 	}
 	return results
+}
+
+// lintL016 warns when session.require_env is set. This is not an error —
+// require_env is a valid, intentional configuration — but operators who set
+// it must remember to register their agents with the matching --env flag.
+// Without it, all agent JWTs will lack the "env" claim and the EnvEvaluator
+// will deny every tool call in the session. The linter surfaces this reminder
+// at policy-authoring time rather than at runtime, when the denial would be
+// harder to diagnose.
+func lintL016(p *Policy) []LintResult {
+	if p.Session.RequireEnv != "" {
+		return []LintResult{{
+			Code:     "L016",
+			Severity: SeverityWarning,
+			Message: fmt.Sprintf(
+				"session.require_env is %q: register agents with --env %s; agents without a matching env claim will be denied by the EnvEvaluator",
+				p.Session.RequireEnv, p.Session.RequireEnv,
+			),
+		}}
+	}
+	return nil
 }
 
 // lintL013 detects circular only_after dependencies that create permanent

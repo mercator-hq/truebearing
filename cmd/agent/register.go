@@ -26,6 +26,7 @@ type minimalPolicy struct {
 // newRegisterCommand returns the `agent register` subcommand.
 func newRegisterCommand() *cobra.Command {
 	var expiryDays int
+	var env string
 
 	cmd := &cobra.Command{
 		Use:   "register <name>",
@@ -34,20 +35,25 @@ func newRegisterCommand() *cobra.Command {
 bound to the specified policy, and write both to ~/.truebearing/keys/.
 
 The JWT is scoped to the tools listed in the policy's may_use field.
-Re-registering an existing agent name overwrites its credentials.`,
+Re-registering an existing agent name overwrites its credentials.
+
+Use --env to bind the agent to a specific deployment environment (e.g.
+"production", "staging"). When the policy declares require_env, only agents
+whose --env value matches are permitted to make tool calls in that session.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRegister(args[0], expiryDays)
+			return runRegister(args[0], expiryDays, env)
 		},
 	}
 
 	cmd.Flags().IntVar(&expiryDays, "expiry-days", 365, "JWT validity period in days")
+	cmd.Flags().StringVar(&env, "env", "", `Deployment environment for this agent (e.g. "production", "staging"). Embedded in the JWT "env" claim and enforced by the policy require_env field.`)
 
 	return cmd
 }
 
 // runRegister implements truebearing agent register.
-func runRegister(name string, expiryDays int) error {
+func runRegister(name string, expiryDays int, env string) error {
 	policyFile := viper.GetString("policy")
 
 	// Validate policy file exists and is readable before doing any key generation.
@@ -79,11 +85,14 @@ func runRegister(name string, expiryDays int) error {
 		return fmt.Errorf("generating keypair for agent %q: %w", name, err)
 	}
 
-	// Mint the JWT with AllowedTools populated from may_use.
+	// Mint the JWT with AllowedTools populated from may_use and Env set when
+	// the --env flag was provided. The Env claim is checked by the EnvEvaluator
+	// against the policy's require_env field on every tool call.
 	claims := identity.AgentClaims{
 		AgentName:    name,
 		PolicyFile:   policyFile,
 		AllowedTools: pol.MayUse,
+		Env:          env,
 	}
 	token, err := identity.MintAgentJWT(claims, privKey, time.Duration(expiryDays)*24*time.Hour)
 	if err != nil {
@@ -135,6 +144,9 @@ func runRegister(name string, expiryDays int) error {
 	fmt.Printf("Agent:          %s\n", name)
 	fmt.Printf("Public key:     %s\n", pubPEMPath)
 	fmt.Printf("JWT written to: %s\n", jwtPath)
+	if env != "" {
+		fmt.Printf("Environment:    %s\n", env)
+	}
 	if len(pol.MayUse) > 0 {
 		fmt.Printf("Allowed tools (%d from policy may_use): [%s]\n",
 			len(pol.MayUse), strings.Join(pol.MayUse, ", "))

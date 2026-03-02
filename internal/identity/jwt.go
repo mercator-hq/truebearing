@@ -38,6 +38,12 @@ type AgentClaims struct {
 
 	// IssuedByProxy is the proxy instance ID that minted this token, for traceability.
 	IssuedByProxy string `json:"issued_by"`
+
+	// Env is the deployment environment for which this agent was registered
+	// (e.g. "production", "staging"). When non-empty, the evaluation pipeline's
+	// EnvEvaluator denies calls from this agent to any session whose policy
+	// carries a require_env value that does not match. Set via `agent register --env`.
+	Env string `json:"env,omitempty"`
 }
 
 // ErrMissingAgentClaim is returned by ValidateAgentJWT when the token does not carry

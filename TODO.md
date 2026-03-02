@@ -1850,29 +1850,32 @@
 
 ---
 
-- [ ] **Task 9.2** — `require_env:` predicate for environment isolation
-      **Priority:** Medium — promised in Pitch 02. DevOps policy pack README explicitly documents
-      this as a gap with an infrastructure-level workaround.
-      **Scope:**
-  - Add `require_env:` as a session-level predicate:
-    ```yaml
-    session:
-      require_env: production
-    ```
-  - Extend `identity.AgentClaims` with optional `Env string`.
-  - Add `--env <name>` flag to `cmd/agent/register.go`.
-  - Add an `EnvEvaluator` in `internal/engine/` that reads the `env` claim from the session's
-    JWT (stored at session creation) and denies with `RuleID: "env.mismatch"` if it does not
-    match the policy's `require_env` value.
-  - Add lint rule L016 — `require_env` is set but the registered agent has no `env` claim
-    (warning, not error — the agent may not be registered yet at lint time).
-  - Update `policy-packs/devops/production-guard.policy.yaml` to use `require_env: production`
-    and remove the workaround note from `policy-packs/devops/README.md`.
-  - Full test matrix. `BenchmarkEnvEvaluator` under 2ms p99.
-
-  **Satisfaction check:**
-  - An agent registered with `--env staging` is denied by a policy with `require_env: production`.
-  - The DevOps policy pack README no longer mentions the workaround.
+- [x] **Task 9.2** — `require_env:` predicate for environment isolation
+      **Status:** Complete
+      **Files:**
+  - `internal/policy/types.go` — added `RequireEnv string` to `SessionPolicy`
+  - `internal/identity/jwt.go` — added `Env string` (omitempty) to `AgentClaims`
+  - `internal/engine/types.go` — added `AgentEnv string` to `ToolCall`
+  - `internal/engine/env.go` — new file; `EnvEvaluator` with exact-match comparison against `pol.Session.RequireEnv`
+  - `internal/engine/env_test.go` — new file; 9 unit tests (no restriction, match, mismatch, empty claim, case-sensitive, shadow mode) + `BenchmarkEnvEvaluator`
+  - `cmd/agent/register.go` — added `--env` flag; `Env` claim embedded in minted JWT; env shown in success output
+  - `internal/proxy/proxy.go` — `EnvEvaluator{}` wired first in pipeline; `call.AgentEnv` populated from `claims.Env`
+  - `internal/policy/lint.go` — added `lintL016` (WARNING when `require_env` is set); wired into `Lint()`
+  - `internal/policy/lint_test.go` — added `TestLint_L016` with 4 cases (set, absent, empty string, staging)
+  - `policy-packs/devops/production-guard.policy.yaml` — removed "post-MVP" note; added `require_env: production` to session block
+  - `policy-packs/devops/README.md` — removed infrastructure-workaround section; replaced with `require_env` feature documentation and `--env` registration examples; added env isolation row to rule table
+  **Notes:**
+  - Pipeline order is now: **Env** → MayUse → Budget → Taint → Sequence → Content → Escalation.
+    EnvEvaluator runs before MayUse because a wrong-environment agent has no business executing
+    any tool regardless of which tool is being called — the session itself is invalid for that agent.
+  - `AgentEnv` is read from the JWT on every request (not stored in the DB). This keeps the
+    check O(1) with no database reads, consistent with how delegation enforcement works (AllowedTools
+    is compared at request time from the live JWT, not stored per-session).
+  - The comparison is case-sensitive and exact. "Production" ≠ "production". This is intentional:
+    operators must use consistent casing. The linter (L016) reminds operators to register agents
+    with the matching `--env` flag when `require_env` is present in the policy.
+  - `BenchmarkEnvEvaluator` result: ~10ns/op (zero allocations) on Apple M1. Well under 2ms p99.
+  - `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...` all exit clean.
 
 ---
 

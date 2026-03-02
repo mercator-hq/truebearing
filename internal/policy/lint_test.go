@@ -1203,6 +1203,101 @@ tools:
 	}
 }
 
+// TestLint_L016 verifies that L016 fires (WARNING) when session.require_env is
+// set and does not fire when the field is absent or empty.
+func TestLint_L016(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantHit bool
+	}{
+		{
+			name: "require_env set triggers L016 warning",
+			yaml: `
+version: "1"
+agent: deploy-agent
+enforcement_mode: block
+session:
+  require_env: production
+  max_history: 200
+budget:
+  max_tool_calls: 50
+  max_cost_usd: 5.00
+may_use:
+  - deploy_production
+`,
+			wantHit: true,
+		},
+		{
+			name: "require_env absent does not trigger L016",
+			yaml: `
+version: "1"
+agent: deploy-agent
+enforcement_mode: block
+session:
+  max_history: 200
+budget:
+  max_tool_calls: 50
+  max_cost_usd: 5.00
+may_use:
+  - deploy_production
+`,
+			wantHit: false,
+		},
+		{
+			name: "require_env empty string does not trigger L016",
+			yaml: `
+version: "1"
+agent: deploy-agent
+enforcement_mode: block
+session:
+  require_env: ""
+  max_history: 200
+budget:
+  max_tool_calls: 50
+  max_cost_usd: 5.00
+may_use:
+  - deploy_production
+`,
+			wantHit: false,
+		},
+		{
+			name: "require_env staging triggers L016 with correct env name in message",
+			yaml: `
+version: "1"
+agent: deploy-agent
+enforcement_mode: block
+session:
+  require_env: staging
+  max_history: 200
+budget:
+  max_tool_calls: 50
+  max_cost_usd: 5.00
+may_use:
+  - deploy_staging
+`,
+			wantHit: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseBytes(t, tc.yaml)
+			results := policy.Lint(p)
+			got := hasCode(results, "L016")
+			if got != tc.wantHit {
+				t.Errorf("L016 fired=%v, want %v (results: %v)", got, tc.wantHit, results)
+			}
+			if tc.wantHit {
+				for _, r := range results {
+					if r.Code == "L016" && r.Severity != policy.SeverityWarning {
+						t.Errorf("L016 severity = %q, want WARNING", r.Severity)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestLint_L015_NonPatternOperators verifies that L015 only fires for
 // contains_pattern and is silent for other operators regardless of Value.
 func TestLint_L015_NonPatternOperators(t *testing.T) {

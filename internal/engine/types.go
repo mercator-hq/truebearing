@@ -68,6 +68,12 @@ type ToolCall struct {
 	// specific paths rather than unmarshal the full structure.
 	Arguments json.RawMessage
 
+	// AgentEnv is the "env" claim from the validated JWT, populated by the proxy
+	// at request time. Empty when the agent was registered without --env. The
+	// EnvEvaluator compares this against policy.Session.RequireEnv; a mismatch
+	// produces a Deny with RuleID "env.mismatch".
+	AgentEnv string
+
 	// RequestedAt is the wall-clock time the proxy received this request.
 	RequestedAt time.Time
 }

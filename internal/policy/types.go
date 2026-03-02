@@ -59,6 +59,13 @@ type SessionPolicy struct {
 	// MaxDurationSeconds is the optional wall-clock lifetime of a session.
 	// Zero means no duration limit.
 	MaxDurationSeconds int `yaml:"max_duration_seconds" json:"max_duration_seconds"`
+
+	// RequireEnv, when non-empty, restricts this policy to agents whose JWT
+	// carries a matching "env" claim. Agents registered without --env, or with
+	// a different environment name, are denied by the EnvEvaluator before any
+	// other pipeline stage runs. The linter warns (L016) when this field is set
+	// so operators are reminded to register agents with the corresponding --env flag.
+	RequireEnv string `yaml:"require_env" json:"require_env,omitempty"`
 }
 
 // BudgetPolicy sets hard ceilings on resource consumption per session.
