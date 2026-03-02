@@ -1949,7 +1949,7 @@
 
 ---
 
-- [ ] **Task 11.1** — Install script + Homebrew formula
+- [x] **Task 11.1** — Install script + Homebrew formula
       **Scope:**
   - Write `scripts/install.sh`: detect OS/arch, download the correct prebuilt binary from the
     GitHub Releases page, place it in `/usr/local/bin/truebearing`, set `0755` permissions.
@@ -1962,6 +1962,19 @@
   **Satisfaction check:**
   - A clean macOS machine with Homebrew installs via `brew install` without cloning the repo.
   - The install script exits non-zero on unsupported platforms rather than silently doing nothing.
+
+  **Status:** Complete
+  **Files:** `scripts/install.sh`, `Formula/truebearing.rb`, `README.md`
+  **Notes:** Formula lives in the main repo's `Formula/` directory; users tap with
+  `brew tap mercator-hq/truebearing https://github.com/mercator-hq/truebearing` then
+  `brew install mercator-hq/truebearing/truebearing`. The formula build command is `./cmd`
+  (not `.`) because `package main` lives in `cmd/main.go`. CGO_ENABLED=0 is required and
+  documented with a Design comment referencing the modernc.org/sqlite pure-Go rationale.
+  Install script uses `set -euo pipefail`, a `trap` for temp-file cleanup, and falls back to
+  `sudo mv` when INSTALL_DIR is not writable. sha256 in the formula is a placeholder
+  `000...` — must be replaced with the real archive hash before the first `go install`-able
+  release is tagged. README Install section now offers Homebrew, curl-install, and
+  `go install` as three parallel paths.
 
 ---
 

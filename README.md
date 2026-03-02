@@ -29,14 +29,41 @@ replayable, tamper-evident, and queryable by session, tool, decision, or distrib
 
 ## Install
 
-```sh
-# macOS / Linux (Go required)
-go install github.com/mercator-hq/truebearing@latest
+### Homebrew (macOS / Linux)
 
-# Or clone and build
+```sh
+brew tap mercator-hq/truebearing https://github.com/mercator-hq/truebearing
+brew install mercator-hq/truebearing/truebearing
+```
+
+### curl install script (macOS / Linux, no Go required)
+
+```sh
+curl -sSL https://raw.githubusercontent.com/mercator-hq/truebearing/master/scripts/install.sh | sh
+```
+
+Installs to `/usr/local/bin/truebearing`. Supported platforms: macOS arm64, macOS amd64,
+Linux amd64, Linux arm64. Exits non-zero on unsupported platforms.
+
+To install a specific version or a custom directory:
+
+```sh
+VERSION=0.1.0 INSTALL_DIR=$HOME/.local/bin \
+  curl -sSL https://raw.githubusercontent.com/mercator-hq/truebearing/master/scripts/install.sh | sh
+```
+
+### From source (Go 1.22+)
+
+```sh
+CGO_ENABLED=0 go install github.com/mercator-hq/truebearing/cmd@latest
+```
+
+Or clone and build:
+
+```sh
 git clone https://github.com/mercator-hq/truebearing
 cd truebearing
-go build -o truebearing .
+CGO_ENABLED=0 go build -o truebearing ./cmd
 ```
 
 Verify:
