@@ -2610,19 +2610,19 @@ modification.
 ---
 
 ### Task 16.2 — Fix polByFingerprint memory growth
-**File:** `cmd/serve.go` (or wherever the fingerprint map lives in the serve path)
-**Why:** Every SIGHUP hot-reload adds a new entry to `polByFingerprint` that is never
-evicted. For a team doing daily GitOps policy pushes over months, this is an unbounded
-memory leak. Not a problem for design partner demos; will be a problem at the 90-day mark.
+**Status:** Complete
+**Files:** `internal/proxy/policy_cache.go` (new), `internal/proxy/proxy.go`,
+`internal/proxy/policy_cache_test.go` (new)
 
-**What to build:**
-- Add a max-size cap to `polByFingerprint` (LRU with capacity 16 is sufficient —
-  no real-world deployment needs more than 16 live policy versions simultaneously).
-- On eviction, log at `slog.Debug` level: "evicting policy version <fingerprint>".
-- Sessions holding a reference to an evicted fingerprint should: on their next tool call,
-  re-resolve against the current policy and log a warning that the original policy
-  version is no longer cached. Do not hard-fail the session.
-- Add a test: load 20 distinct policy fingerprints, verify map size stays ≤ 16.
+**Notes:** Replaced the unbounded `polByFingerprint map[string]*policy.Policy` with a
+`policyLRU` type (capacity 16, `container/list` + map) in a new `policy_cache.go` file.
+`policyLRU` carries its own `sync.Mutex` so cache lookups on the hot request path do
+not contend with `polMu` (which now protects only `livePol`). On eviction, `ReloadPolicy`
+logs at `slog.Debug`: "evicting policy version". Sessions whose fingerprint is no longer
+cached (evicted or proxy restarted) are re-resolved to the current live policy with a
+`slog.Warn` rather than receiving a 409 Conflict — `writeConflict` was removed as dead
+code. Three unit tests cover: size cap at 16, LRU eviction order, and no-growth on
+duplicate set.
 
 ---
 

@@ -64,13 +64,14 @@ type Proxy struct {
 	// with a single curl command. Zero means no admin server is running.
 	adminPort int
 
-	// polMu protects livePol and polByFingerprint. Policy hot-reload via SIGHUP
-	// atomically replaces livePol while retaining previous policy versions in
-	// polByFingerprint so existing sessions can continue evaluating against the
-	// policy version they were bound to at creation time.
-	polMu            sync.RWMutex
-	livePol          *policy.Policy
-	polByFingerprint map[string]*policy.Policy
+	// polMu protects livePol. Policy hot-reload via SIGHUP atomically replaces
+	// livePol while retaining previous policy versions in polCache (a bounded
+	// LRU of capacity lruCapacity) so existing sessions can continue evaluating
+	// against the policy version they were bound to at creation time.
+	// polCache has its own internal mutex and is safe to access without polMu.
+	polMu    sync.RWMutex
+	livePol  *policy.Policy
+	polCache *policyLRU
 }
 
 // New creates a Proxy that forwards traffic to upstream, uses st for agent
@@ -107,6 +108,8 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 		&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}},
 		&engine.EscalationEvaluator{Store: &engine.StoreBackend{Store: st}},
 	)
+	cache := newPolicyLRU(lruCapacity)
+	cache.set(pol.Fingerprint, pol)
 	return &Proxy{
 		upstream:   upstream,
 		st:         st,
@@ -120,9 +123,9 @@ func New(upstream *url.URL, st *store.Store, pol *policy.Policy, dbPath string, 
 		// Default to a discard logger until SetLogger is called by cmd/serve.go.
 		// This prevents unexpected log output in tests and library callers that
 		// do not configure a log level.
-		logger:           slog.New(slog.DiscardHandler),
-		livePol:          pol,
-		polByFingerprint: map[string]*policy.Policy{pol.Fingerprint: pol},
+		logger:   slog.New(slog.DiscardHandler),
+		livePol:  pol,
+		polCache: cache,
 	}
 }
 
@@ -159,13 +162,11 @@ func (p *Proxy) currentPolicy() *policy.Policy {
 }
 
 // policyForFingerprint looks up a previously-loaded policy by its fingerprint.
-// Returns false if no policy with that fingerprint is held in memory, which
-// indicates the proxy was restarted or a very old policy version was evicted.
+// Returns false if the fingerprint is not cached — either because the proxy
+// was restarted or because the entry was evicted from the LRU (capacity
+// lruCapacity). polCache has its own mutex; polMu is not required.
 func (p *Proxy) policyForFingerprint(fp string) (*policy.Policy, bool) {
-	p.polMu.RLock()
-	defer p.polMu.RUnlock()
-	pol, ok := p.polByFingerprint[fp]
-	return pol, ok
+	return p.polCache.get(fp)
 }
 
 // ReloadPolicy re-parses the policy file at its original SourcePath and
@@ -173,9 +174,12 @@ func (p *Proxy) policyForFingerprint(fp string) (*policy.Policy, bool) {
 // lint rules. If parsing or linting fails the previous policy remains active
 // and the error is returned to the caller for logging.
 //
-// Existing sessions are not disrupted: polByFingerprint retains all previously
-// loaded policy versions so that sessions bound to an older fingerprint
-// continue to evaluate correctly without receiving a 409 Conflict.
+// Existing sessions are not disrupted: polCache retains up to lruCapacity
+// previously loaded policy versions so that sessions bound to an older
+// fingerprint continue to evaluate correctly. If the cache is full, the
+// least-recently-used policy version is evicted and a debug log entry is
+// emitted. Sessions that encounter an evicted fingerprint are re-resolved to
+// the current live policy rather than receiving a hard error.
 func (p *Proxy) ReloadPolicy() error {
 	p.polMu.RLock()
 	sourcePath := p.livePol.SourcePath
@@ -200,15 +204,16 @@ func (p *Proxy) ReloadPolicy() error {
 		}
 	}
 
+	// Insert into the cache before updating livePol to eliminate the window
+	// where a new session could be bound to newPol.Fingerprint before the
+	// cache entry exists. polCache has its own mutex; polMu is not required.
+	if evictedFP := p.polCache.set(newPol.Fingerprint, newPol); evictedFP != "" {
+		p.logger.Debug("evicting policy version", "fingerprint", evictedFP)
+	}
+
 	p.polMu.Lock()
-	defer p.polMu.Unlock()
 	p.livePol = newPol
-	// Retain the previous policy in the registry so existing sessions remain
-	// valid under their original fingerprint. Design: we keep all versions in
-	// memory for the lifetime of the proxy. In practice the number of hot-reloads
-	// per proxy lifetime is small (GitOps push cadence), so unbounded growth is
-	// not a concern for the MVP.
-	p.polByFingerprint[newPol.Fingerprint] = newPol
+	p.polMu.Unlock()
 	return nil
 }
 
@@ -407,13 +412,18 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// Resolve the policy version this session was bound to at creation. After
 	// a SIGHUP hot-reload the live policy fingerprint may differ from the
 	// session's fingerprint, but we continue evaluating with the session-bound
-	// version so existing sessions are not disrupted. If the proxy was
-	// restarted and the old policy version is no longer in memory, return 409
-	// so the agent knows to start a fresh session.
+	// version so existing sessions are not disrupted. If the original version
+	// is no longer cached (proxy restarted or evicted from the LRU), re-resolve
+	// to the current live policy and log a warning rather than hard-failing the
+	// session. Per task 16.2: eviction must not break active sessions.
 	sessionPol, ok := p.policyForFingerprint(sess.PolicyFingerprint)
 	if !ok {
-		writeConflict(w, sess.PolicyFingerprint, p.currentPolicy().Fingerprint)
-		return
+		sessionPol = p.currentPolicy()
+		p.logger.WarnContext(r.Context(), "session policy version no longer cached; re-resolving to current policy",
+			"session_id", sessionID,
+			"evicted_fingerprint", sess.PolicyFingerprint,
+			"current_fingerprint", sessionPol.Fingerprint,
+		)
 	}
 
 	// Terminated sessions reject all subsequent tool calls with 410 Gone.
@@ -813,26 +823,6 @@ func (p *Proxy) writeTraceEntry(e TraceEntry) {
 			"error", err,
 		)
 	}
-}
-
-// writeConflict writes the 409 Conflict response for tool calls that arrive on
-// a session created under a different policy fingerprint. Per mvp-plan.md §14
-// Fix 3, the agent must start a new session after a policy change.
-func writeConflict(w http.ResponseWriter, sessionFingerprint, currentFingerprint string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusConflict)
-	body, _ := json.Marshal(struct {
-		Error                    string `json:"error"`
-		Message                  string `json:"message"`
-		SessionPolicyFingerprint string `json:"session_policy_fingerprint"`
-		CurrentPolicyFingerprint string `json:"current_policy_fingerprint"`
-	}{
-		Error:                    "policy_changed",
-		Message:                  "Policy was updated after this session was created. Start a new session to continue under the updated policy.",
-		SessionPolicyFingerprint: sessionFingerprint,
-		CurrentPolicyFingerprint: currentFingerprint,
-	})
-	_, _ = w.Write(body)
 }
 
 // writeGone writes a 410 Gone response for tool calls on terminated sessions.
