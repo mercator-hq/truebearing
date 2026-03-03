@@ -2454,35 +2454,36 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 15.2 — Audit: Compliance evidence report generator
-**Files:** `cmd/audit/report.go` (new file), `cmd/audit/audit.go`
-**Why:** The MVP plan §11.2 specified a structured evidence object format. What was
-built is raw JSONL rows. For Avallon AI (insurance claims), Ritivel (FDA submissions),
-LunaBill (HIPAA), and Vector Legal (legal malpractice), the auditor does not read JSONL.
-They need a human-readable document they can hand to a regulator.
-This is the single most important feature for regulated-vertical design partners.
+**Status:** Complete
+**Files:**
+- `cmd/audit/report.go` — new file; `newReportCommand`, `runReport`, `writeReport`,
+  `writeEvidenceHeader`, `writePolicySummarySection`, `writePolicyExplainBlock`,
+  `writeTimelineSection`, `writeEscalationSection`, `writeAttestationSection`,
+  `writeRegulatoryNotes`, `storeRecordToAuditRecord`, and three helper functions
+  (`reportDescribeMode`, `reportDescribeBudget`, `reportSortedKeys`).
+- `cmd/audit/audit.go` — added `cmd.AddCommand(newReportCommand())`.
+- `cmd/audit/report_test.go` — new file; 6 table-driven tests covering all sections,
+  empty session, real-key tamper detection, fingerprint-only policy summary, and
+  pending escalation status in the timeline.
 
-**What to build:**
-- New command: `truebearing audit report --session <id> [--output report.md]`
-- Reads audit_log rows for the session, the session event rows, and resolves the
-  policy fingerprint to a policy version (if the policy file is on disk, include
-  the policy source; otherwise note the fingerprint only).
-- Generates a Markdown document with sections:
-  - **Evidence Header**: `evidence_id` (UUID v4, generated), `schema_version: "1.0"`,
-    `generated_at`, `session_id`, `agent_name`, `policy_fingerprint`.
-  - **Policy Summary**: output of `policy explain` for the policy version that governed
-    this session.
-  - **Execution Timeline**: table of tool calls in sequence order — timestamp, tool name,
-    decision, reason_code, escalation status.
-  - **Escalation Records**: for any escalation in the session, show what was approved,
-    by whom (the JWT hash of the approver), and when.
-  - **Cryptographic Attestation**: the Ed25519 signature verification summary —
-    number of records, number that verified OK, any TAMPERED findings.
-  - **Regulatory Notes**: a boilerplate paragraph citing EU AI Act Article 9 language
-    about behavioral boundaries and human oversight, with blanks for the organization
-    to fill in the specific system classification.
-- If `--output` is not specified, write to stdout.
-- Add a test: given a fixture session with known audit records, the report output
-  must contain all five sections and the correct record count.
+**Notes:**
+- Command: `truebearing audit report --session <id> [--output report.md] [--policy <file>] [--key <file>]`
+- Six Markdown sections: Evidence Header (UUID v4 evidence_id, schema 1.0), Policy Summary,
+  Execution Timeline, Escalation Records, Cryptographic Attestation, Regulatory Notes.
+- `--policy` is optional: when provided the policy is parsed and a plain-English summary
+  (identical output to `policy explain`) is embedded in a fenced code block. A fingerprint
+  mismatch warning is shown when the supplied file does not match the session's fingerprint.
+  When omitted, the section shows the fingerprint recorded at session creation time only.
+- `--key` defaults to `~/.truebearing/keys/proxy.pub.pem`. When the key cannot be loaded,
+  the report is still generated; the attestation section notes the reason and still shows
+  the total record count.
+- `storeRecordToAuditRecord` converts `store.AuditRecord` → `audit.AuditRecord` for
+  signature verification; this avoids a circular import (internal/audit imports store).
+- Approver JWT hash is not recorded in the current escalation schema; the Escalation Records
+  section shows the operator note (Reason field) instead. Column is labelled "Operator Note".
+- Policy explain helpers (`reportDescribeMode`, `reportDescribeBudget`, `reportSortedKeys`)
+  are duplicated from `cmd/policy/explain.go` because those functions are unexported and
+  cmd packages must not import each other.
 
 ---
 
