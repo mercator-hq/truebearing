@@ -18,6 +18,11 @@ import (
 // that deny the call based on the actual values present in the tool call's
 // arguments JSON.
 //
+// Match modes (per ToolPolicy.NeverWhenMatch):
+//   - "any" or absent: OR logic — the block fires if any single predicate matches.
+//     This is the backward-compatible default.
+//   - "all": AND logic — the block fires only when every predicate matches.
+//
 // Fail-closed behaviour (per CLAUDE.md §6 invariant 4):
 //   - A predicate whose argument path is absent from the call arguments returns
 //     an error (→ Deny). The policy author declared that this argument matters;
@@ -27,16 +32,16 @@ import (
 //     indicate a policy that bypassed linting.
 //   - A contains_pattern value that fails regexp compilation returns an error
 //     (→ Deny). The pattern is validated by lint rule L015.
+//   - An unrecognised never_when_match value returns an error (→ Deny).
+//     Valid values are validated by the linter at policy-authoring time.
 //
 // The evaluator is read-only per pipeline invariant 2: it never writes to
 // the session, the policy, or the store.
 type ContentEvaluator struct{}
 
-// Evaluate checks each never_when content predicate for the called tool in
-// order. The first predicate that fires returns a Deny with
-// RuleID: "content.<argument>.<operator>". If no predicate fires, Allow is
-// returned. An evaluation error from any predicate is returned as-is so the
-// pipeline can fail closed.
+// Evaluate checks the never_when predicates for the called tool using the
+// match mode declared in never_when_match ("any" by default). If no predicates
+// are configured for this tool, Allow is returned immediately.
 func (e *ContentEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *session.Session, pol *policy.Policy) (Decision, error) {
 	tp, ok := pol.Tools[call.ToolName]
 	if !ok || len(tp.NeverWhen) == 0 {
@@ -44,6 +49,23 @@ func (e *ContentEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *sessio
 		return Decision{Action: Allow}, nil
 	}
 
+	switch tp.NeverWhenMatch {
+	case "", policy.ContentMatchAny:
+		return evalNeverWhenAny(call, tp)
+	case policy.ContentMatchAll:
+		return evalNeverWhenAll(call, tp)
+	default:
+		return Decision{}, fmt.Errorf(
+			"unsupported never_when_match value %q for tool %q: supported values are %q and %q",
+			tp.NeverWhenMatch, call.ToolName, policy.ContentMatchAny, policy.ContentMatchAll,
+		)
+	}
+}
+
+// evalNeverWhenAny implements OR logic: the block fires on the first predicate
+// that matches. This is the default and is backward-compatible with policies
+// that do not set never_when_match.
+func evalNeverWhenAny(call *ToolCall, tp policy.ToolPolicy) (Decision, error) {
 	for _, pred := range tp.NeverWhen {
 		fired, err := evalContentPredicate(call, pred)
 		if err != nil {
@@ -62,13 +84,51 @@ func (e *ContentEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *sessio
 				RuleID: fmt.Sprintf("content.%s.%s", pred.Argument, pred.Operator),
 				Feedback: &DenyFeedback{
 					ReasonCode: "content_blocked",
-					Suggestion: fmt.Sprintf("Tool call was blocked by a content predicate: argument %q must not satisfy %s %q. Modify the argument value and retry.", pred.Argument, pred.Operator, pred.Value),
+					Suggestion: fmt.Sprintf(
+						"Tool call was blocked by a content predicate: argument %q must not satisfy %s %q. Modify the argument value and retry.",
+						pred.Argument, pred.Operator, pred.Value,
+					),
 				},
 			}, nil
 		}
 	}
-
 	return Decision{Action: Allow}, nil
+}
+
+// evalNeverWhenAll implements AND logic: the block fires only when every
+// predicate in the never_when list matches simultaneously. A single
+// non-matching predicate allows the call through.
+func evalNeverWhenAll(call *ToolCall, tp policy.ToolPolicy) (Decision, error) {
+	var reasons []string
+	for _, pred := range tp.NeverWhen {
+		fired, err := evalContentPredicate(call, pred)
+		if err != nil {
+			return Decision{}, fmt.Errorf(
+				"evaluating never_when predicate (argument=%q operator=%q) for tool %q: %w",
+				pred.Argument, pred.Operator, call.ToolName, err,
+			)
+		}
+		if !fired {
+			// AND short-circuit: one non-matching predicate means the block
+			// does not fire regardless of what other predicates would return.
+			return Decision{Action: Allow}, nil
+		}
+		reasons = append(reasons, fmt.Sprintf("argument %q %s %q", pred.Argument, pred.Operator, pred.Value))
+	}
+
+	// All predicates fired.
+	return Decision{
+		Action: Deny,
+		Reason: fmt.Sprintf("never_when (all): all %d predicates matched: %s", len(reasons), strings.Join(reasons, "; ")),
+		RuleID: "content.all_matched",
+		Feedback: &DenyFeedback{
+			ReasonCode: "content_blocked",
+			Suggestion: fmt.Sprintf(
+				"Tool call was blocked because all %d never_when conditions matched simultaneously. Modify the flagged argument values and retry.",
+				len(reasons),
+			),
+		},
+	}, nil
 }
 
 // evalContentPredicate evaluates a single ContentPredicate against the tool

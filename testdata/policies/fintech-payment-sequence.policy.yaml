@@ -16,7 +16,7 @@
 #   - taint.applies / taint.clears lifecycle
 #   - escalate_when with numeric threshold
 #   - requires_prior_n (at least one invoice must be verified)
-#   - never_when content predicates (block on argument values)
+#   - never_when content predicates with explicit never_when_match: any (OR logic)
 
 version: "1"
 agent: payments-agent
@@ -65,6 +65,9 @@ tools:
 
     # Block the transfer when the memo field contains suspicious content that
     # could indicate a prompt-injection payload or an unreviewed instruction.
+    # never_when_match: any — a single matching condition is sufficient to block.
+    # Explicit to satisfy lint rule L019 and make the OR intent unambiguous.
+    never_when_match: any
     never_when:
       - argument: memo
         operator: contains_pattern

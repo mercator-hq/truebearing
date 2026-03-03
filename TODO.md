@@ -2369,23 +2369,24 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 14.4 — Engine: Fix `never_when` AND/OR logic mismatch
-**File:** `internal/engine/content.go`
-**Why:** Pitch 01 shows `AND` logic combining two content conditions. The engine
-currently fires on `OR` — any single matching condition blocks. An engineer who copies
-the pitch YAML will get over-denial with no error to explain why.
+**Status:** Complete
+**Files:**
+- `internal/policy/types.go` — added `ContentMatchMode` type + `ContentMatchAny`/`ContentMatchAll` constants; added `NeverWhenMatch ContentMatchMode` field to `ToolPolicy`
+- `internal/engine/content.go` — refactored `Evaluate` to dispatch `evalNeverWhenAny` (OR, default) or `evalNeverWhenAll` (AND); unrecognised `NeverWhenMatch` values return an error (fail closed)
+- `internal/engine/content_test.go` — added `TestContentEvaluator_MatchAll`, `TestContentEvaluator_MatchAll_ErrorFailClosed`, `TestContentEvaluator_InvalidMatchMode`, `BenchmarkContentEvaluator_All`
+- `internal/policy/lint.go` — added `lintL019`: warns when `len(NeverWhen) > 1` and `NeverWhenMatch == ""`
+- `internal/policy/lint_test.go` — added `TestLint_L019` with 6 table cases
+- `cmd/policy/explain.go` — added "Content guards:" section with `describeMatchMode` helper; renders "blocked if ANY of:" or "blocked only if ALL of:" per tool
+- `cmd/policy/policy_test.go` — updated `TestPrintExplain_AllSections`; added `TestPrintExplain_ContentGuards_AllMode` and `TestPrintExplain_NoContentGuards`
+- `testdata/policies/fintech-payment-sequence.policy.yaml` — added `never_when_match: any` to `execute_wire_transfer` (explicit OR, silences L019)
+- `testdata/policies/content-and-logic.policy.yaml` — new fixture demonstrating `match: all` (AND) and `match: any` (OR) in a single policy
 
-**What to build:**
-- Add an optional `match` field to the `never_when` block: `match: all` (AND) or
-  `match: any` (OR, current default).
-- If `match` is absent, default to `any` (preserving backward compatibility).
-- If `match: all`, all predicates in the `never_when` block must match for the
-  block to trigger.
-- Update the linter (L0xx) to add a new rule: if a `never_when` block has more than
-  one predicate and no `match` field, emit a WARNING recommending explicit `match: any`
-  or `match: all` to avoid ambiguity.
-- Update `policy explain` to render the match logic in plain English:
-  "blocked if ANY of: ..." vs "blocked only if ALL of: ..."
-- Update `testdata` fixtures and tests to cover both modes.
+**Notes:**
+- The match field is named `never_when_match` on `ToolPolicy` (YAML sibling to `never_when`). This preserves backward compat — existing policies with no `never_when_match` field continue to use OR logic unchanged.
+- `evalNeverWhenAll` short-circuits on the first non-matching predicate. Errors from any predicate still fail closed in both modes.
+- `RuleID` for AND denials is `"content.all_matched"` (no single predicate to point to). The Reason string lists all matched predicates as a semicolon-separated list.
+- Benchmarks: `BenchmarkContentEvaluator` and `BenchmarkContentEvaluator_All` both run at ~4.4µs (p50), well under the 2ms p99 target.
+- L019 fires on `len > 1` predicates with empty `NeverWhenMatch`. Single-predicate blocks do not fire L019 since `match` is irrelevant for a single condition.
 
 ---
 

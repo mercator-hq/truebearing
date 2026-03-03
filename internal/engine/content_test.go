@@ -272,6 +272,155 @@ func TestContentEvaluator(t *testing.T) {
 	}
 }
 
+// TestContentEvaluator_MatchAll verifies AND logic: the block fires only when
+// every predicate in the never_when list matches simultaneously.
+func TestContentEvaluator_MatchAll(t *testing.T) {
+	ctx := context.Background()
+	eval := &engine.ContentEvaluator{}
+
+	// Helper: policy with match: all and two predicates.
+	allPolicy := func(toolName string, preds []policy.ContentPredicate) *policy.Policy {
+		return &policy.Policy{
+			EnforcementMode: policy.EnforcementBlock,
+			MayUse:          []string{toolName},
+			Tools: map[string]policy.ToolPolicy{
+				toolName: {
+					NeverWhen:      preds,
+					NeverWhenMatch: policy.ContentMatchAll,
+				},
+			},
+		}
+	}
+
+	twoPreds := []policy.ContentPredicate{
+		{Argument: "recipient", Operator: "is_external", Value: "@acme.com"},
+		{Argument: "body", Operator: "contains_pattern", Value: "confidential"},
+	}
+
+	cases := []struct {
+		name               string
+		argsJSON           string
+		preds              []policy.ContentPredicate
+		wantAction         engine.Action
+		wantRuleIDContains string
+	}{
+		{
+			name:               "both predicates match - deny (AND satisfied)",
+			argsJSON:           `{"recipient":"vendor@external.io","body":"this is confidential data"}`,
+			preds:              twoPreds,
+			wantAction:         engine.Deny,
+			wantRuleIDContains: "content.all_matched",
+		},
+		{
+			name:       "first predicate matches, second does not - allow (AND not satisfied)",
+			argsJSON:   `{"recipient":"vendor@external.io","body":"quarterly report"}`,
+			preds:      twoPreds,
+			wantAction: engine.Allow,
+		},
+		{
+			name:       "first predicate does not match, second does - allow (AND not satisfied)",
+			argsJSON:   `{"recipient":"alice@acme.com","body":"this is confidential data"}`,
+			preds:      twoPreds,
+			wantAction: engine.Allow,
+		},
+		{
+			name:       "neither predicate matches - allow",
+			argsJSON:   `{"recipient":"alice@acme.com","body":"quarterly report"}`,
+			preds:      twoPreds,
+			wantAction: engine.Allow,
+		},
+		{
+			name:     "single predicate in all mode - fires same as any mode",
+			argsJSON: `{"status":"delete_all"}`,
+			preds: []policy.ContentPredicate{
+				{Argument: "status", Operator: "equals", Value: "delete_all"},
+			},
+			wantAction:         engine.Deny,
+			wantRuleIDContains: "content.all_matched",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pol := allPolicy("send-email", tc.preds)
+			call := contentCall("send-email", tc.argsJSON)
+
+			got, err := eval.Evaluate(ctx, call, contentSess(), pol)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Action != tc.wantAction {
+				t.Errorf("Action = %q, want %q (Reason: %q)", got.Action, tc.wantAction, got.Reason)
+			}
+			if tc.wantRuleIDContains != "" && !strings.Contains(got.RuleID, tc.wantRuleIDContains) {
+				t.Errorf("RuleID %q does not contain %q", got.RuleID, tc.wantRuleIDContains)
+			}
+			if tc.wantAction == engine.Deny && got.Reason == "" {
+				t.Error("Deny decision has empty Reason")
+			}
+		})
+	}
+}
+
+// TestContentEvaluator_MatchAll_ErrorFailClosed verifies that an error from any
+// predicate in "all" mode causes fail-closed behaviour regardless of whether
+// earlier predicates fired.
+func TestContentEvaluator_MatchAll_ErrorFailClosed(t *testing.T) {
+	ctx := context.Background()
+	eval := &engine.ContentEvaluator{}
+
+	// First predicate fires (external), second predicate errors (missing argument).
+	// In "all" mode: we evaluate both, so the missing-argument error must still surface.
+	pol := &policy.Policy{
+		EnforcementMode: policy.EnforcementBlock,
+		MayUse:          []string{"send-email"},
+		Tools: map[string]policy.ToolPolicy{
+			"send-email": {
+				NeverWhenMatch: policy.ContentMatchAll,
+				NeverWhen: []policy.ContentPredicate{
+					{Argument: "recipient", Operator: "is_external", Value: "@acme.com"},
+					{Argument: "missing_field", Operator: "equals", Value: "x"},
+				},
+			},
+		},
+	}
+	call := contentCall("send-email", `{"recipient":"vendor@external.io"}`)
+
+	// The first predicate fires (external recipient). The second errors because
+	// "missing_field" is absent. The evaluator must fail closed even in "all" mode.
+	_, err := eval.Evaluate(ctx, call, contentSess(), pol)
+	if err == nil {
+		t.Fatal("expected error from missing argument in all mode; got nil — evaluator must fail closed")
+	}
+}
+
+// TestContentEvaluator_InvalidMatchMode verifies that an unrecognised
+// never_when_match value causes the evaluator to return an error (fail closed).
+func TestContentEvaluator_InvalidMatchMode(t *testing.T) {
+	ctx := context.Background()
+	eval := &engine.ContentEvaluator{}
+
+	pol := &policy.Policy{
+		EnforcementMode: policy.EnforcementBlock,
+		MayUse:          []string{"send-email"},
+		Tools: map[string]policy.ToolPolicy{
+			"send-email": {
+				// "both" is not a valid ContentMatchMode.
+				NeverWhenMatch: "both",
+				NeverWhen: []policy.ContentPredicate{
+					{Argument: "recipient", Operator: "equals", Value: "bad@example.com"},
+				},
+			},
+		},
+	}
+	call := contentCall("send-email", `{"recipient":"bad@example.com"}`)
+
+	_, err := eval.Evaluate(ctx, call, contentSess(), pol)
+	if err == nil {
+		t.Fatal("expected error for unsupported never_when_match value; got nil — evaluator must fail closed")
+	}
+}
+
 // TestContentEvaluator_ShadowMode verifies that a never_when violation produces
 // shadow_deny (not deny) when the pipeline's effective enforcement mode is
 // shadow. ContentEvaluator always returns plain Deny; shadow conversion is a
@@ -321,6 +470,47 @@ func BenchmarkContentEvaluator(b *testing.B) {
 	// allow hot path, which dominates in production.
 	call := &engine.ToolCall{
 		SessionID: "bench-content-sess",
+		AgentName: "bench-agent",
+		ToolName:  "send-email",
+		Arguments: json.RawMessage(`{"body":"quarterly financial summary attached","recipient":"alice@acme.com"}`),
+	}
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d, err := eval.Evaluate(ctx, call, sess, pol)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if d.Action != engine.Allow {
+			b.Fatalf("expected allow, got %q: %s", d.Action, d.Reason)
+		}
+	}
+}
+
+// BenchmarkContentEvaluator_All measures evaluation cost in "all" mode with two
+// predicates, both of which must fire to trigger a deny. The benchmark exercises
+// the allow hot path (first predicate passes → block does not fire). Target: p99 < 2ms.
+func BenchmarkContentEvaluator_All(b *testing.B) {
+	eval := &engine.ContentEvaluator{}
+	pol := &policy.Policy{
+		EnforcementMode: policy.EnforcementBlock,
+		MayUse:          []string{"send-email"},
+		Tools: map[string]policy.ToolPolicy{
+			"send-email": {
+				NeverWhenMatch: policy.ContentMatchAll,
+				NeverWhen: []policy.ContentPredicate{
+					{Argument: "body", Operator: "contains_pattern", Value: "/secret|key|token|password/"},
+					{Argument: "recipient", Operator: "is_external", Value: "@acme.com"},
+				},
+			},
+		},
+	}
+	sess := &session.Session{ID: "bench-content-all-sess", AgentName: "bench-agent"}
+	// Internal recipient means the first predicate does not fire — the AND block
+	// allows immediately after the first non-match.
+	call := &engine.ToolCall{
+		SessionID: "bench-content-all-sess",
 		AgentName: "bench-agent",
 		ToolName:  "send-email",
 		Arguments: json.RawMessage(`{"body":"quarterly financial summary attached","recipient":"alice@acme.com"}`),

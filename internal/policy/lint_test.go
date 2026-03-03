@@ -1502,3 +1502,140 @@ tools:
 		})
 	}
 }
+
+// TestLint_L019 verifies that L019 warns when a never_when block has more than
+// one predicate but never_when_match is not set, and does not fire when the
+// field is explicitly set or when there is only one predicate.
+func TestLint_L019(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantHit bool
+	}{
+		{
+			name: "two predicates without never_when_match triggers L019",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+      - argument: body
+        operator: contains_pattern
+        value: "/confidential/"
+`,
+			wantHit: true,
+		},
+		{
+			name: "two predicates with never_when_match: any does not trigger L019",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when_match: any
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+      - argument: body
+        operator: contains_pattern
+        value: "/confidential/"
+`,
+			wantHit: false,
+		},
+		{
+			name: "two predicates with never_when_match: all does not trigger L019",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when_match: all
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+      - argument: body
+        operator: contains_pattern
+        value: "/confidential/"
+`,
+			wantHit: false,
+		},
+		{
+			name: "single predicate without never_when_match does not trigger L019",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+`,
+			wantHit: false,
+		},
+		{
+			name: "no never_when predicates does not trigger L019",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - tool_a
+tools:
+  tool_a: {}
+`,
+			wantHit: false,
+		},
+		{
+			name: "three predicates without never_when_match triggers L019",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - send-email
+tools:
+  send-email:
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+      - argument: body
+        operator: contains_pattern
+        value: "/confidential/"
+      - argument: subject
+        operator: equals
+        value: "URGENT"
+`,
+			wantHit: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseBytes(t, tc.yaml)
+			results := policy.Lint(p)
+			got := hasCode(results, "L019")
+			if got != tc.wantHit {
+				t.Errorf("hasCode(results, \"L019\") = %v, want %v; results: %v", got, tc.wantHit, results)
+			}
+		})
+	}
+}

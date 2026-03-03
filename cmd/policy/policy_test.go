@@ -279,6 +279,10 @@ func TestPrintExplain_AllSections(t *testing.T) {
 				},
 				Taint:        internalpolicy.TaintPolicy{Applies: true, Label: "sensitive"},
 				EscalateWhen: &internalpolicy.EscalateRule{ArgumentPath: "$.amount", Operator: ">", Value: 500},
+				NeverWhen: []internalpolicy.ContentPredicate{
+					{Argument: "recipient", Operator: "is_external", Value: "@acme.com"},
+				},
+				NeverWhenMatch: internalpolicy.ContentMatchAny,
 			},
 			"tool_c": {
 				Taint: internalpolicy.TaintPolicy{Clears: true},
@@ -307,11 +311,72 @@ func TestPrintExplain_AllSections(t *testing.T) {
 		"tool_c: clears the taint",
 		"Escalation rules:",
 		"tool_b: escalate to human if amount > 500",
+		"Content guards:",
+		"tool_b: blocked if ANY of:",
+		`argument "recipient" is_external "@acme.com"`,
 	}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
 			t.Errorf("output missing %q\nfull output:\n%s", check, out)
 		}
+	}
+}
+
+// TestPrintExplain_ContentGuards_AllMode verifies that a tool with
+// never_when_match: all is rendered as "blocked only if ALL of:" in explain output.
+func TestPrintExplain_ContentGuards_AllMode(t *testing.T) {
+	p := &internalpolicy.Policy{
+		Agent:           "guard-bot",
+		EnforcementMode: internalpolicy.EnforcementBlock,
+		MayUse:          []string{"send_email"},
+		Tools: map[string]internalpolicy.ToolPolicy{
+			"send_email": {
+				NeverWhenMatch: internalpolicy.ContentMatchAll,
+				NeverWhen: []internalpolicy.ContentPredicate{
+					{Argument: "recipient", Operator: "is_external", Value: "@acme.com"},
+					{Argument: "body", Operator: "contains_pattern", Value: "/confidential/"},
+				},
+			},
+		},
+	}
+	if _, err := internalpolicy.Fingerprint(p); err != nil {
+		t.Fatalf("Fingerprint: %v", err)
+	}
+	var buf bytes.Buffer
+	printExplain(&buf, p)
+	out := buf.String()
+
+	checks := []string{
+		"Content guards:",
+		"send_email: blocked only if ALL of:",
+		`argument "recipient" is_external "@acme.com"`,
+		`argument "body" contains_pattern "/confidential/"`,
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Errorf("output missing %q\nfull output:\n%s", check, out)
+		}
+	}
+
+	// Verify the ANY phrasing is absent — this is ALL mode.
+	if strings.Contains(out, "blocked if ANY of:") {
+		t.Errorf("ALL-mode output should not contain ANY phrasing; got:\n%s", out)
+	}
+}
+
+// TestPrintExplain_NoContentGuards verifies that the Content guards section is
+// omitted when no tool has never_when predicates.
+func TestPrintExplain_NoContentGuards(t *testing.T) {
+	p, err := internalpolicy.ParseFile("../../testdata/minimal.policy.yaml")
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	var buf bytes.Buffer
+	printExplain(&buf, p)
+	out := buf.String()
+
+	if strings.Contains(out, "Content guards:") {
+		t.Errorf("minimal policy should not print Content guards section; got:\n%s", out)
 	}
 }
 

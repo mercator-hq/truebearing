@@ -1,0 +1,57 @@
+# Pattern: AND-logic content guard — block only when multiple argument conditions
+# are all true simultaneously.
+#
+# Risk mitigated: An outbound messaging agent should block external emails ONLY
+# when the recipient is outside the organisation AND the body contains sensitive
+# content. Blocking on either condition alone would produce too many false
+# positives: internal emails with sensitive content are acceptable, and external
+# emails with non-sensitive content are acceptable.
+#
+# This fixture demonstrates:
+#   - never_when_match: all (AND logic) — the block fires only when all predicates match
+#   - Contrast with never_when_match: any (OR logic, the default) in the same policy
+#   - Explicit match fields on both tools to satisfy lint rule L019
+
+version: "1"
+agent: messaging-agent
+enforcement_mode: block
+
+session:
+  max_history: 200
+  max_duration_seconds: 3600
+
+budget:
+  max_tool_calls: 100
+  max_cost_usd: 2.00
+
+may_use:
+  - send_email
+  - post_to_slack
+
+tools:
+  send_email:
+    # AND logic: block only when the recipient is external AND the body contains
+    # sensitive content. An internal email with sensitive content is allowed.
+    # An external email with benign content is allowed. Only when both are true
+    # simultaneously is the call blocked.
+    never_when_match: all
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+      - argument: body
+        operator: contains_pattern
+        value: "/confidential|proprietary|trade.secret/"
+
+  post_to_slack:
+    # OR logic (explicit): block when the channel is public OR the message
+    # contains a pattern matching internal credentials. Either condition alone
+    # is sufficient to block — this is OR logic.
+    never_when_match: any
+    never_when:
+      - argument: channel
+        operator: not_equals
+        value: "internal-ops"
+      - argument: message
+        operator: contains_pattern
+        value: "/password|api.key|token/"

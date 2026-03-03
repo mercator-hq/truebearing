@@ -120,6 +120,42 @@ func printExplain(w io.Writer, p *policy.Policy) {
 			fmt.Fprintln(w, line)
 		}
 	}
+
+	// Content guards: never_when predicates with explicit match-mode labelling.
+	var contentLines []string
+	for _, name := range toolNames {
+		tp := p.Tools[name]
+		if len(tp.NeverWhen) == 0 {
+			continue
+		}
+		matchLabel := describeMatchMode(tp.NeverWhenMatch)
+		contentLines = append(contentLines, fmt.Sprintf("  %s: %s", name, matchLabel))
+		for _, pred := range tp.NeverWhen {
+			contentLines = append(contentLines, fmt.Sprintf(
+				"    - argument %q %s %q",
+				pred.Argument, pred.Operator, pred.Value,
+			))
+		}
+	}
+	if len(contentLines) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Content guards:")
+		for _, line := range contentLines {
+			fmt.Fprintln(w, line)
+		}
+	}
+}
+
+// describeMatchMode returns a plain-English intro phrase for a never_when block's
+// match mode, suitable for prefixing the list of predicates in explain output.
+func describeMatchMode(mode policy.ContentMatchMode) string {
+	switch mode {
+	case policy.ContentMatchAll:
+		return "blocked only if ALL of:"
+	default:
+		// Empty string or "any" — both mean OR logic (backward-compatible default).
+		return "blocked if ANY of:"
+	}
 }
 
 // describeMode returns a human-readable label for an enforcement mode,

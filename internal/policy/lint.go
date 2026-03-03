@@ -82,6 +82,7 @@ func Lint(p *Policy) []LintResult {
 	results = append(results, lintL016(p)...)
 	results = append(results, lintL017(p)...)
 	results = append(results, lintL018(p)...)
+	results = append(results, lintL019(p)...)
 	return results
 }
 
@@ -420,6 +421,28 @@ func lintL018(p *Policy) []LintResult {
 				Message: fmt.Sprintf(
 					"tool %q: rate_limit.max_calls must be a positive integer, got %d",
 					toolName, tp.RateLimit.MaxCalls,
+				),
+			})
+		}
+	}
+	return results
+}
+
+// lintL019 warns when a never_when block has more than one predicate but no
+// never_when_match field is set. The implied default is "any" (OR logic), but
+// an operator who copies an AND-logic example from documentation will get
+// unexpected OR behaviour without this warning. Explicitly setting
+// never_when_match: any or never_when_match: all removes the ambiguity.
+func lintL019(p *Policy) []LintResult {
+	var results []LintResult
+	for toolName, tp := range p.Tools {
+		if len(tp.NeverWhen) > 1 && tp.NeverWhenMatch == "" {
+			results = append(results, LintResult{
+				Code:     "L019",
+				Severity: SeverityWarning,
+				Message: fmt.Sprintf(
+					"tool %q: never_when has %d predicates but never_when_match is not set; defaulting to \"any\" (OR logic) — add never_when_match: any or never_when_match: all to make the intent explicit",
+					toolName, len(tp.NeverWhen),
 				),
 			})
 		}

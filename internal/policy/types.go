@@ -89,9 +89,14 @@ type ToolPolicy struct {
 
 	Sequence     SequencePolicy     `yaml:"sequence"      json:"sequence"`
 	Taint        TaintPolicy        `yaml:"taint"         json:"taint"`
-	EscalateWhen *EscalateRule      `yaml:"escalate_when" json:"escalate_when"`
-	NeverWhen    []ContentPredicate `yaml:"never_when"    json:"never_when"`
-	RateLimit    *RateLimitPolicy   `yaml:"rate_limit"    json:"rate_limit,omitempty"`
+	EscalateWhen *EscalateRule      `yaml:"escalate_when"    json:"escalate_when"`
+	NeverWhen    []ContentPredicate `yaml:"never_when"       json:"never_when"`
+	// NeverWhenMatch controls how the predicates in NeverWhen are combined.
+	// "any" (default when absent) fires when any single predicate matches (OR logic).
+	// "all" fires only when every predicate matches simultaneously (AND logic).
+	// An absent value with more than one predicate triggers lint rule L019.
+	NeverWhenMatch ContentMatchMode `yaml:"never_when_match" json:"never_when_match,omitempty"`
+	RateLimit      *RateLimitPolicy `yaml:"rate_limit"       json:"rate_limit,omitempty"`
 }
 
 // RateLimitPolicy sets a per-tool call frequency ceiling within a rolling
@@ -112,10 +117,26 @@ type RateLimitPolicy struct {
 	WindowSeconds int `yaml:"window_seconds" json:"window_seconds"`
 }
 
+// ContentMatchMode controls how multiple never_when predicates within a single
+// never_when block are combined.
+type ContentMatchMode string
+
+const (
+	// ContentMatchAny fires the block when any single predicate matches (OR logic).
+	// This is the backward-compatible default when never_when_match is absent.
+	ContentMatchAny ContentMatchMode = "any"
+
+	// ContentMatchAll fires the block only when every predicate matches simultaneously
+	// (AND logic). Use this when the pitch YAML shows combined conditions — e.g.
+	// "block only if recipient is external AND body contains a pattern".
+	ContentMatchAll ContentMatchMode = "all"
+)
+
 // ContentPredicate defines a single content-based guard on a tool argument
 // value. The predicate fires — causing a Deny — when the named argument
 // satisfies the condition. Predicates are evaluated in order; the first match
-// terminates evaluation and returns a Deny.
+// terminates evaluation and returns a Deny (in "any" mode) or all predicates
+// must fire before the block triggers (in "all" mode).
 //
 // Supported operators:
 //   - is_external: fires when the argument string does NOT end with Value.
