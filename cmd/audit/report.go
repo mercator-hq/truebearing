@@ -375,9 +375,11 @@ func writeEscalationSection(w io.Writer, escalations []store.Escalation) error {
 }
 
 // writeAttestationSection emits the "## 5. Cryptographic Attestation" section.
-// It converts each store.AuditRecord to an internalaudit.AuditRecord and calls
-// internalaudit.Verify. If pubKey is nil (keyLoadErr is non-nil), verification is
-// skipped and the section notes why.
+// It calls internalaudit.Verify on each record. Because store.AuditRecord is a
+// type alias for pkg/audit.AuditRecord (the same underlying type as
+// internalaudit.AuditRecord), no field-copy conversion is required.
+// If pubKey is nil (keyLoadErr is non-nil), verification is skipped and the
+// section notes why.
 func writeAttestationSection(w io.Writer, records []store.AuditRecord, pubKey ed25519.PublicKey, keyLoadErr error) error {
 	fmt.Fprintln(w, "## 5. Cryptographic Attestation")
 	fmt.Fprintln(w)
@@ -389,10 +391,12 @@ func writeAttestationSection(w io.Writer, records []store.AuditRecord, pubKey ed
 		return nil
 	}
 
+	// Design: store.AuditRecord is a type alias for pkg/audit.AuditRecord, and
+	// internalaudit.AuditRecord is the same alias. Passing &r directly is
+	// therefore type-correct — no conversion is needed.
 	var okCount, tamperedCount int
 	for _, r := range records {
-		ar := storeRecordToAuditRecord(r)
-		if verr := internalaudit.Verify(&ar, pubKey); verr != nil {
+		if verr := internalaudit.Verify(&r, pubKey); verr != nil {
 			tamperedCount++
 		} else {
 			okCount++
@@ -433,29 +437,6 @@ func writeRegulatoryNotes(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "_This document was generated automatically by TrueBearing. It must be reviewed by the")
 	fmt.Fprintln(w, "organisation's compliance officer before submission to any regulatory authority._")
-}
-
-// storeRecordToAuditRecord converts a store.AuditRecord to an internalaudit.AuditRecord
-// for Ed25519 signature verification. The two types carry identical fields but live in
-// separate packages to avoid a circular import (internal/audit imports store for Write;
-// store must not import internal/audit for querying).
-func storeRecordToAuditRecord(r store.AuditRecord) internalaudit.AuditRecord {
-	return internalaudit.AuditRecord{
-		ID:                r.ID,
-		SessionID:         r.SessionID,
-		Seq:               r.Seq,
-		AgentName:         r.AgentName,
-		ToolName:          r.ToolName,
-		ArgumentsSHA256:   r.ArgumentsSHA256,
-		Decision:          r.Decision,
-		DecisionReason:    r.DecisionReason,
-		PolicyFingerprint: r.PolicyFingerprint,
-		AgentJWTSHA256:    r.AgentJWTSHA256,
-		ClientTraceID:     r.ClientTraceID,
-		DelegationChain:   r.DelegationChain,
-		RecordedAt:        r.RecordedAt,
-		Signature:         r.Signature,
-	}
 }
 
 // reportDescribeMode converts an EnforcementMode to a human-readable label.

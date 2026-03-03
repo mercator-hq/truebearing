@@ -2587,22 +2587,25 @@ rather than "Mercator" (company name) which appears in the task spec.
 ## PHASE 16 — Technical Debt (P2: Will bite in 90 days)
 
 ### Task 16.1 — Consolidate triple AuditRecord struct
-**Files:** `internal/store/audit.go`, `internal/audit/audit.go`, `cmd/audit/replay.go`
-**Why:** Three separate `AuditRecord`-like structs. Task 8.2 patched the worst
-JSON tag inconsistency but the structural problem remains. Any schema change now
-requires updating all three, and this has already caused one production bug.
+**Status:** Complete
+**Files created:** `pkg/audit/doc.go`, `pkg/audit/types.go`
+**Files modified:** `internal/audit/record.go`, `internal/store/audit.go`, `cmd/audit/replay.go`, `cmd/audit/report.go`
 
-**What to build:**
-- Define a canonical `AuditRecord` struct in `internal/audit/types.go` (or promote
-  to `pkg/audit/types.go` if the circular import is resolvable).
-- The canonical struct must have correct snake_case JSON tags, `omitempty` where
-  appropriate, and all fields that any of the three current structs use.
-- Refactor `internal/store` to use the canonical type for reads and writes.
-- Refactor `cmd/audit/replay.go` to use it instead of its local `auditLogLine`.
-- The `internal/audit` signing/verification logic should reference the same type.
-- After refactor: `grep -r "AuditRecord\|auditLogLine" .` should return only the
-  canonical definition and its usages — no parallel struct definitions.
-- All existing audit tests must pass without modification (they are the regression guard).
+**Notes:** Resolved the circular import by placing the canonical struct in the
+new `pkg/audit` package (independent of both `internal/audit` and `internal/store`).
+Both `internal/audit.AuditRecord` and `internal/store.AuditRecord` are now type
+aliases for `pkg/audit.AuditRecord`. `cmd/audit.auditLogLine` is likewise a type
+alias — this also fixed a pre-existing bug where `auditLogLine` was missing the
+`DelegationChain` field (added in Task 12.2), causing silent data loss when parsing
+JSONL files with delegation records.
+
+The `storeRecordToAuditRecord` conversion function in `cmd/audit/report.go` was
+deleted because the two aliased types are now identical — `&r` can be passed
+directly to `internalaudit.Verify`. All existing audit tests passed without any
+modification.
+
+`grep -r "AuditRecord\|auditLogLine" .` now returns exactly one struct definition
+(`pkg/audit/types.go`) and its usages (type alias declarations + call sites).
 
 ---
 

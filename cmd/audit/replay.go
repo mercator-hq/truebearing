@@ -19,6 +19,7 @@ import (
 	inpolicy "github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/session"
 	"github.com/mercator-hq/truebearing/internal/store"
+	pkgaudit "github.com/mercator-hq/truebearing/pkg/audit"
 )
 
 // replayEntry holds the per-call result of a replay evaluation alongside the
@@ -35,25 +36,15 @@ type replayEntry struct {
 	Reason string
 }
 
-// auditLogLine is the JSON schema of a JSONL audit log file. It mirrors
-// internal/audit.AuditRecord's json tags so that json.Unmarshal works
-// correctly. Defined locally to avoid importing internal/audit in a package
-// also named "audit".
-type auditLogLine struct {
-	ID                string `json:"id"`
-	SessionID         string `json:"session_id"`
-	Seq               uint64 `json:"seq"`
-	AgentName         string `json:"agent_name"`
-	ToolName          string `json:"tool_name"`
-	ArgumentsSHA256   string `json:"arguments_sha256"`
-	Decision          string `json:"decision"`
-	DecisionReason    string `json:"decision_reason,omitempty"`
-	PolicyFingerprint string `json:"policy_fingerprint"`
-	AgentJWTSHA256    string `json:"agent_jwt_sha256"`
-	ClientTraceID     string `json:"client_trace_id,omitempty"`
-	RecordedAt        int64  `json:"recorded_at"`
-	Signature         string `json:"signature"`
-}
+// auditLogLine is a type alias for pkg/audit.AuditRecord, the canonical
+// JSONL audit log entry type. Using the alias rather than a local struct
+// ensures json.Unmarshal sees the correct field names and that schema changes
+// (including DelegationChain, added in Task 12.2) are picked up automatically.
+//
+// Design: a named alias rather than a direct use of pkgaudit.AuditRecord keeps
+// the function signatures below stable; tests in audit_test.go that construct
+// auditLogLine literals continue to compile without any changes.
+type auditLogLine = pkgaudit.AuditRecord
 
 // newReplayCommand returns the `audit replay` subcommand.
 func newReplayCommand() *cobra.Command {

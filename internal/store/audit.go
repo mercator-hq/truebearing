@@ -3,67 +3,18 @@ package store
 import (
 	"fmt"
 	"time"
+
+	pkgaudit "github.com/mercator-hq/truebearing/pkg/audit"
 )
 
-// AuditRecord is a single row read from the audit_log table. It mirrors
-// audit.AuditRecord but lives in the store package to avoid a circular import:
-// internal/audit imports store for Write, so store must not import audit for
-// querying. Callers in cmd/ may convert to audit.AuditRecord as needed.
+// AuditRecord is a type alias for pkg/audit.AuditRecord — the canonical
+// tamper-evident audit log entry type. Using a type alias means schema changes
+// require a single edit in pkg/audit.AuditRecord; no parallel struct updates
+// are needed here.
 //
-// JSON tags use snake_case so that `audit query --format json` emits the same
-// field names that `audit verify` expects when it unmarshals into
-// internal/audit.AuditRecord. Without matching tags, verify would see empty
-// fields and report every record as TAMPERED.
-type AuditRecord struct {
-	// ID is the UUID v4 primary key.
-	ID string `json:"id"`
-
-	// SessionID is the session the tool call was made in.
-	SessionID string `json:"session_id"`
-
-	// Seq is the session-scoped monotonically increasing sequence number.
-	Seq uint64 `json:"seq"`
-
-	// AgentName is the "agent" JWT claim identifying the caller.
-	AgentName string `json:"agent_name"`
-
-	// ToolName is the name of the tool that was called.
-	ToolName string `json:"tool_name"`
-
-	// ArgumentsSHA256 is the hex-encoded SHA-256 of the raw arguments JSON.
-	ArgumentsSHA256 string `json:"arguments_sha256"`
-
-	// Decision is the enforcement outcome: allow, deny, shadow_deny, or escalate.
-	Decision string `json:"decision"`
-
-	// DecisionReason is the human-readable policy violation explanation.
-	// Empty for allow decisions (stored as NULL). Omitted from JSON when empty
-	// to match the omitempty behaviour on internal/audit.AuditRecord.
-	DecisionReason string `json:"decision_reason,omitempty"`
-
-	// PolicyFingerprint is the fingerprint of the policy active at decision time.
-	PolicyFingerprint string `json:"policy_fingerprint"`
-
-	// AgentJWTSHA256 is the hex-encoded SHA-256 of the Bearer token on the request.
-	AgentJWTSHA256 string `json:"agent_jwt_sha256"`
-
-	// ClientTraceID is the W3C traceparent or vendor trace ID from the inbound headers.
-	// Empty when no trace header was present (stored as NULL). Omitted from JSON
-	// when empty to match the omitempty behaviour on internal/audit.AuditRecord.
-	ClientTraceID string `json:"client_trace_id,omitempty"`
-
-	// DelegationChain records the delegation path when a child agent makes a tool
-	// call. Format: "parent → child" for one level of delegation. Empty for root
-	// agents. Omitted from JSON when empty to match omitempty on audit.AuditRecord.
-	DelegationChain string `json:"delegation_chain,omitempty"`
-
-	// RecordedAt is the wall-clock time the proxy produced this record, in Unix nanoseconds.
-	RecordedAt int64 `json:"recorded_at"`
-
-	// Signature is the base64-encoded Ed25519 signature over the canonical JSON
-	// of all other fields.
-	Signature string `json:"signature"`
-}
+// The alias preserves all existing code that references store.AuditRecord
+// (QueryAuditLog return values, test helpers, etc.) without modification.
+type AuditRecord = pkgaudit.AuditRecord
 
 // AuditFilter specifies optional query constraints for QueryAuditLog. All fields
 // are optional; a zero AuditFilter returns all records. Multiple non-zero fields
