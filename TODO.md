@@ -2391,27 +2391,25 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 14.5 — Docs/README: Fix the prerequisite gap and pitch alignment
-**Files:** `README.md`, any pitch YAML examples in `docs/`
-**Why:** The README shows the two Python lines without the required setup steps.
-A design partner who reads it before a call and tries to run it will fail at step 1.
-This is a first-impression problem.
-
-**What to build:**
-- Add a "Quick Start" section to README that lists the actual steps in order:
-  1. `brew install mercator-hq/truebearing/truebearing` (or `go install`)
-  2. `truebearing init` (generates scaffold)
-  3. `truebearing agent register <name> --policy ./mercator.policy.yaml`
-  4. `truebearing serve --upstream <url> --policy ./mercator.policy.yaml`
-  5. The two Python lines
-- Immediately above the two Python lines, add a callout: "Prerequisites: steps 1–4
-  above must complete before this works. Takes ~10 minutes on a clean machine."
-- Update the `never_when` YAML example in docs to use explicit `match: any` so it
-  matches the engine behavior after Task 14.4.
-- In `docs/`, add an `integrations/` folder with:
-  - `openai.md`: how to set `base_url` manually for OpenAI clients (until Task 14.2
-    ships a first-class SDK path)
-  - `langchain.md`: 15-line example showing `base_url` config on LangChain's HTTP client
-  - `langraph.md`: same for LangGraph
+**Status:** Complete
+**Files:** `README.md`, `docs/policy-reference.md`, `docs/integrations/openai.md`,
+  `docs/integrations/langchain.md`, `docs/integrations/langraph.md`
+**Notes:**
+- Added 5-step numbered overview at the top of the Quick Start section in README.md.
+  `truebearing init` is now listed as step 2 and documented in the detailed walkthrough.
+- Added prerequisite callout blockquote immediately above the Python SDK section. The
+  callout links back to the Quick Start steps and mentions the ~10-minute setup time.
+- Added `§5.5 Content Guards — never_when` to `docs/policy-reference.md` with the full
+  operator reference table, `never_when_match` semantics, and YAML examples for both
+  `any` (OR) and `all` (AND) logic. The section explicitly labels the default as `any`.
+- Extended the linter rules table from L001–L013 to L001–L019, covering the
+  `never_when`, `require_env`, and `rate_limit` lint checks added in recent tasks.
+- Updated the complete policy example (§11) to add a `never_when` block with explicit
+  `never_when_match: any`. Updated the enforcement summary list to mention the new guard.
+- Created `docs/integrations/` with three files. Each covers prerequisites, a ~15-line
+  Python and/or TypeScript example, and a note on session ID discipline. LangGraph doc
+  includes a parallel-execution warning specific to that framework.
+- Updated README.md "Next Steps" section to link to the three new integration docs.
 
 ---
 

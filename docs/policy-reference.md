@@ -22,11 +22,12 @@ policy using this document alone.
    - [Sequence Predicates](#52-sequence-predicates)
    - [Taint System](#53-taint-system)
    - [Escalation Rules](#54-escalation-rules)
+   - [Content Guards — `never_when`](#55-content-guards--never_when)
 6. [Escalation Notification — `escalation`](#6-escalation-notification--escalation)
 7. [Reserved Tool Names](#7-reserved-tool-names)
 8. [Enforcement Mode Hierarchy](#8-enforcement-mode-hierarchy)
 9. [Shadow Mode Onboarding Workflow](#9-shadow-mode-onboarding-workflow)
-10. [Linter Rules Reference — L001–L013](#10-linter-rules-reference--l001l013)
+10. [Linter Rules Reference — L001–L019](#10-linter-rules-reference--l001l019)
 11. [Complete Policy Example](#11-complete-policy-example)
 
 ---
@@ -511,6 +512,104 @@ without triggering a new escalation. The agent does not need to modify its behav
 
 ---
 
+### 5.5 Content Guards — `never_when`
+
+`never_when` blocks a tool call when the tool's arguments satisfy one or more content-based
+predicates. It inspects the **argument values at call time** — unlike sequence predicates, which
+inspect session history. Use it to block calls whose payload violates a policy rule regardless of
+what happened before.
+
+#### `never_when` predicates
+
+Each predicate in the list is an object with three fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `argument` | `string` | The key in the tool call's JSON arguments to inspect |
+| `operator` | `string` | The comparison to apply — see operators table below |
+| `value` | `string` | The comparand string |
+
+**Supported operators:**
+
+| Operator | Fires (denies) when |
+|---|---|
+| `is_external` | The argument string does **not** end with `value` (use `value` as the trusted-domain suffix, e.g. `@acme.com`) |
+| `contains_pattern` | The argument string matches `value` as a Go regexp. Leading/trailing `/` delimiters (Perl/JS style) are stripped before compilation. |
+| `equals` | The argument string equals `value` exactly |
+| `not_equals` | The argument string does not equal `value` |
+
+**Example — block emails sent outside the company domain:**
+
+```yaml
+tools:
+  send_email:
+    never_when_match: any
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+```
+
+**Example — block on any of several forbidden patterns (OR logic):**
+
+```yaml
+tools:
+  draft_message:
+    never_when_match: any   # block if ANY predicate matches (default)
+    never_when:
+      - argument: body
+        operator: contains_pattern
+        value: "/ssn[:\s]\d{3}-\d{2}-\d{4}/"
+      - argument: body
+        operator: contains_pattern
+        value: "/credit.card.number/i"
+```
+
+**Example — block only when BOTH conditions are true (AND logic):**
+
+```yaml
+tools:
+  send_email:
+    never_when_match: all   # block only when ALL predicates match simultaneously
+    never_when:
+      - argument: recipient
+        operator: is_external
+        value: "@acme.com"
+      - argument: body
+        operator: contains_pattern
+        value: "/contract|agreement|nda/i"
+```
+
+#### `never_when_match`
+
+Controls how multiple predicates in `never_when` are combined.
+
+| Value | Behaviour |
+|---|---|
+| `any` | Block when **any single** predicate matches (OR logic). Default when `never_when_match` is absent. |
+| `all` | Block only when **every** predicate matches simultaneously (AND logic). |
+
+**Always set `never_when_match` explicitly when you have more than one predicate.** Omitting it
+with multiple predicates triggers lint warning L019 and makes intent ambiguous to future readers.
+
+**Denial response when triggered:**
+
+```json
+{
+  "error": {
+    "code": -32603,
+    "message": "tool call denied",
+    "data": {
+      "decision": "deny",
+      "reason": "content.never_when: predicate 0 matched (argument \"recipient\", operator \"is_external\")",
+      "rule_id": "content.never_when"
+    }
+  }
+}
+```
+
+---
+
 ## 6. Escalation Notification — `escalation`
 
 The top-level `escalation:` block configures how TrueBearing notifies operators when an
@@ -644,7 +743,7 @@ would create an audit gap.
 
 ---
 
-## 10. Linter Rules Reference — L001–L013
+## 10. Linter Rules Reference — L001–L019
 
 Run the linter with:
 
@@ -669,6 +768,12 @@ Exit codes: `1` if any **ERROR** is present; `0` for **WARNING** and **INFO** on
 | `L011` | WARNING | A tool has `taint.applies: true` but no tool has `taint.clears: true` | Add `taint: clears: true` to a clearance tool, or accept permanent session taint |
 | `L012` | ERROR | `escalate_when.operator` is not a valid operator | Use one of: `>`, `<`, `>=`, `<=`, `==`, `!=`, `contains`, `matches` |
 | `L013` | ERROR | Circular `only_after` dependency detected | Break the cycle — if A requires B and B requires A, neither can ever be called |
+| `L014` | ERROR | A `never_when` predicate uses an unrecognised operator | Use one of: `is_external`, `contains_pattern`, `equals`, `not_equals` |
+| `L015` | ERROR | A `never_when` predicate uses `contains_pattern` with an invalid Go regexp | Fix the `value` regexp; wrap `/` delimiters are stripped before compilation |
+| `L016` | WARNING | `session.require_env` is set | Register agents with `--env <value>`; agents without a matching `env` claim will be denied |
+| `L017` | ERROR | `rate_limit.window_seconds` is zero or negative | Set `window_seconds` to a positive integer |
+| `L018` | ERROR | `rate_limit.max_calls` is zero or negative | Set `max_calls` to a positive integer; use `may_use` exclusion to disable a tool entirely |
+| `L019` | WARNING | `never_when` has multiple predicates but `never_when_match` is not set | Add `never_when_match: any` (OR) or `never_when_match: all` (AND) to make intent explicit |
 
 ### L013 — Circular Dependency in Detail
 
@@ -735,6 +840,14 @@ tools:
         tool: validate_record
         count: 1
 
+    # Block if the record type is a draft from an untrusted source.
+    # never_when_match: any fires when any single predicate matches (OR logic).
+    never_when_match: any
+    never_when:
+      - argument: record_type
+        operator: equals
+        value: external_draft
+
     escalate_when:
       argument_path: "$.amount_usd"
       operator: ">"
@@ -768,11 +881,13 @@ truebearing policy explain complete-example.policy.yaml
 3. **Sequence guard** — `submit_record` requires `validate_record` and `reviewer_approval`
    to appear in the session history before it may run.
 4. **Minimum-count guard** — `validate_record` must have been called at least once.
-5. **Prompt-injection isolation** — `submit_record` is blocked if `read_external_content`
+5. **Content guard** — `submit_record` is denied when `record_type` equals `external_draft`,
+   regardless of session history. Uses `never_when_match: any` (OR logic, explicit).
+6. **Prompt-injection isolation** — `submit_record` is blocked if `read_external_content`
    was called this session (until `run_clearance_check` clears the taint).
-6. **Taint propagation** — reading external content taints the session; the clearance tool
+7. **Taint propagation** — reading external content taints the session; the clearance tool
    removes the taint.
-7. **Human escalation** — any call to `submit_record` with `amount_usd > 10000` is paused
+8. **Human escalation** — any call to `submit_record` with `amount_usd > 10000` is paused
    for human approval regardless of whether the sequence is satisfied.
-8. **Tool-level block** — `submit_record` violations are always hard-denied even while the
+9. **Tool-level block** — `submit_record` violations are always hard-denied even while the
    global mode is `shadow`.

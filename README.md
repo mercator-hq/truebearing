@@ -76,9 +76,30 @@ truebearing --help
 
 ## Quick Start: Confirmed Blocked Call in Under 10 Minutes
 
-### 1. Write a policy
+Five steps from install to first enforced block:
 
-Create `my-policy.yaml`:
+1. **Install** — `brew install mercator-hq/truebearing/truebearing` (or `go install` — see [Install](#install) above)
+2. **Scaffold** — `truebearing init` generates a starter policy interactively (takes ~2 minutes)
+3. **Register** — `truebearing agent register <name> --policy ./truebearing.policy.yaml`
+4. **Serve** — `truebearing serve --upstream <mcp-url> --policy ./truebearing.policy.yaml`
+5. **Connect** — two lines of Python (see [Python SDK](#python-sdk-2-line-integration) below)
+
+Steps 1–2 are one-time setup. Steps 3–5 repeat for each agent or project.
+
+---
+
+### 1. Write or scaffold a policy
+
+**Quickest path — interactive wizard:**
+
+```sh
+truebearing init
+```
+
+Answers five questions and writes `truebearing.policy.yaml` in shadow mode. No DSL knowledge
+required. The generated file passes `truebearing policy lint` with zero errors.
+
+**Or write it manually.** Create `my-policy.yaml`:
 
 ```yaml
 version: "1"
@@ -311,6 +332,12 @@ truebearing audit verify audit.jsonl
 
 ## Python SDK (2-line integration)
 
+> **Prerequisites:** complete steps 1–4 of the [Quick Start](#quick-start-confirmed-blocked-call-in-under-10-minutes)
+> above before running the code below. A running proxy (`truebearing serve`) and a registered
+> agent JWT are required. The SDK spawns the proxy automatically when given a `policy:` path,
+> but the binary must be installed and the agent must be registered first. Takes ~10 minutes
+> on a clean machine.
+
 ```sh
 pip install truebearing
 ```
@@ -411,9 +438,12 @@ Reusable policy templates for common patterns are in [policy-packs/](policy-pack
 ## Next Steps
 
 - **[docs/policy-reference.md](docs/policy-reference.md)** — complete DSL specification with all
-  predicates (`only_after`, `never_after`, `requires_prior_n`, `taint`, `escalate_when`)
+  predicates (`only_after`, `never_after`, `requires_prior_n`, `taint`, `escalate_when`, `never_when`)
 - **[docs/demo-script.md](docs/demo-script.md)** — step-by-step 20-minute demo script for
   technical evaluations
+- **[docs/integrations/openai.md](docs/integrations/openai.md)** — using TrueBearing with OpenAI clients
+- **[docs/integrations/langchain.md](docs/integrations/langchain.md)** — using TrueBearing with LangChain
+- **[docs/integrations/langraph.md](docs/integrations/langraph.md)** — using TrueBearing with LangGraph
 - **[testdata/policies/](testdata/policies/)** — example policy files for fintech, healthcare,
   insurance, legal, and regulatory workflows
 
