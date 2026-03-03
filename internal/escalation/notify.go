@@ -17,6 +17,13 @@ type NotifyConfig struct {
 	// WebhookURL is the HTTP endpoint to POST escalation-created events to.
 	// If empty, the notification is written to stdout instead.
 	WebhookURL string
+
+	// AdminPort is the port on which the TrueBearing admin HTTP server is
+	// listening (default 7774). When non-zero, the notification payload
+	// includes approve_url and reject_url fields so webhook recipients can
+	// approve or reject the escalation with a single curl command rather than
+	// requiring CLI access to the proxy machine.
+	AdminPort int
 }
 
 // notifyPayload is the JSON body sent to the webhook URL or written to stdout
@@ -29,6 +36,12 @@ type notifyPayload struct {
 	Reason       string `json:"reason"`
 	ApproveCmd   string `json:"approve_cmd"`
 	RejectCmd    string `json:"reject_cmd"`
+	// ApproveURL and RejectURL are populated when the admin HTTP server is
+	// running (NotifyConfig.AdminPort != 0). They let webhook recipients
+	// approve or reject with a single curl POST rather than requiring CLI
+	// access to the proxy machine.
+	ApproveURL string `json:"approve_url,omitempty"`
+	RejectURL  string `json:"reject_url,omitempty"`
 }
 
 // Notify fires an escalation-created notification for the given escalation record.
@@ -55,6 +68,12 @@ func Notify(esc *store.Escalation, reason string, cfg *NotifyConfig) {
 		Reason:       reason,
 		ApproveCmd:   fmt.Sprintf("truebearing escalation approve %s", esc.ID),
 		RejectCmd:    fmt.Sprintf("truebearing escalation reject %s --reason \"...\"", esc.ID),
+	}
+	// Populate HTTP approval URLs when the admin server is running so
+	// webhook recipients can act without CLI access to the proxy machine.
+	if cfg != nil && cfg.AdminPort != 0 {
+		p.ApproveURL = fmt.Sprintf("http://localhost:%d/admin/escalations/%s/approve", cfg.AdminPort, esc.ID)
+		p.RejectURL = fmt.Sprintf("http://localhost:%d/admin/escalations/%s/reject", cfg.AdminPort, esc.ID)
 	}
 	body, err := json.Marshal(p)
 	if err != nil {

@@ -2567,26 +2567,20 @@ rather than "Mercator" (company name) which appears in the task spec.
 ---
 
 ### Task 15.5 — Escalation: HTTP approval endpoint
-**File:** `internal/proxy/proxy.go` (or new `internal/proxy/admin.go`)
-**Why:** The current escalation approval model requires CLI access to the machine
-running the proxy. For any team where the approver (compliance officer, CFO) is not
-the same person as the operator, this is a blocker. Every multi-person team evaluating
-the product will ask this question first.
+**Status:** Complete
+**Files:**
+- `internal/proxy/admin.go` — new file; `AdminHandler()` method exposing the three admin endpoints with a Go 1.22 method-prefixed mux; `adminEscalation` DTO with snake_case JSON tags (projects from internal `store.Escalation` to avoid coupling the API response format to the internal struct's field names); `writeAdminEscalationError` maps sql.ErrNoRows → 404 and "cannot be resolved" → 409.
+- `internal/proxy/admin_test.go` — 8 tests: list (no filter), list with status filter + invalid filter, approve transitions to approved, reject transitions to rejected, approve not found (404), approve already-resolved (409), approve empty body, end-to-end: approve via admin then `check_escalation_status` returns "approved".
+- `internal/proxy/proxy.go` — added `adminPort int` field; `SetAdminPort(port int)` method; updated `handleMCP` Escalate branch to always construct `NotifyConfig` (with `AdminPort`) rather than only when `sessionPol.Escalation != nil`.
+- `internal/escalation/notify.go` — added `AdminPort int` to `NotifyConfig`; added `ApproveURL`/`RejectURL` (omitempty) to `notifyPayload`; populated when `AdminPort != 0`.
+- `cmd/serve.go` — added `adminPort int` flag (default 7774); binds `127.0.0.1:{adminPort}` via `net.Listen` before starting the main server; calls `p.SetAdminPort(adminPort)` and starts `http.Serve(adminLn, p.AdminHandler())` in a goroutine; prints `admin on  127.0.0.1:{adminPort}` in startup banner; `--admin-port 0` disables the admin server.
 
-**What to build:**
-- Add a simple admin HTTP API (localhost-only by default):
-  - `GET /admin/escalations?status=pending` — list pending escalations
-  - `POST /admin/escalations/{id}/approve` with JSON body `{"note": "..."}`
-  - `POST /admin/escalations/{id}/reject` with JSON body `{"reason": "..."}`
-- These endpoints call the same internal functions as the CLI escalation commands —
-  no new business logic, just an HTTP surface over the existing escalation state machine.
-- Bind to a separate port (default: 7774). Add `--admin-port` flag to `truebearing serve`
-  so it is clearly distinct from the proxy port (default: 7771).
-- Include the admin endpoint URL in the webhook notification payload so the webhook
-  recipient can approve with a single `curl` command.
-- Add tests: approve via HTTP transitions escalation status to `approved`; reject via
-  HTTP transitions to `rejected`. Verify the agent's next `check_escalation_status`
-  call returns the correct state.
+**Notes:**
+- Admin server is localhost-only by design — `net.Listen("tcp", "127.0.0.1:{port}")` rather than `":port"` so it cannot be reached from the network without an explicit port-forward.
+- A failed admin bind is fatal (returns error from `RunE`) — a silent failure would leave escalations unresolvable for the approver.
+- The admin API does not require JWT auth; localhost binding is the access control. This matches the pattern of management endpoints in tools like HAProxy and Prometheus.
+- Proxy port default changed from 7771 (plan) to 7773 (existing code); admin default is 7774 as specified.
+- `store.Escalation` has no JSON tags so `adminEscalation` DTO was introduced to produce snake_case JSON without touching the store package.
 
 ---
 

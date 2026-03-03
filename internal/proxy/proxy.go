@@ -58,6 +58,11 @@ type Proxy struct {
 	// that was passed to store.Open() and is not used for any DB operation
 	// inside the proxy itself.
 	dbPath string
+	// adminPort is the port on which the admin HTTP server is listening. When
+	// non-zero, escalation notifications include approve_url and reject_url
+	// fields pointing to this port so webhook recipients can approve or reject
+	// with a single curl command. Zero means no admin server is running.
+	adminPort int
 
 	// polMu protects livePol and polByFingerprint. Policy hot-reload via SIGHUP
 	// atomically replaces livePol while retaining previous policy versions in
@@ -233,6 +238,14 @@ func (p *Proxy) SetTracer(t trace.Tracer) {
 func (p *Proxy) SetLogger(l *slog.Logger) {
 	p.logger = l
 	p.pipeline.SetLogger(l)
+}
+
+// SetAdminPort records the port on which the admin HTTP server is listening.
+// Call this from cmd/serve.go after the admin listener is bound. When non-zero,
+// escalation notifications include approve_url and reject_url fields so webhook
+// recipients can act without CLI access to the proxy machine.
+func (p *Proxy) SetAdminPort(port int) {
+	p.adminPort = port
 }
 
 // emitDecisionSpan records a single OTel span for one policy decision. The
@@ -556,9 +569,11 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Fire the notification after the escalation is persisted. Delivery
 		// failure is logged inside Notify and does not block the response.
-		var notifyCfg *escalation.NotifyConfig
+		// Always populate AdminPort so the webhook payload includes approve_url
+		// and reject_url when the admin server is running (p.adminPort != 0).
+		notifyCfg := &escalation.NotifyConfig{AdminPort: p.adminPort}
 		if sessionPol.Escalation != nil {
-			notifyCfg = &escalation.NotifyConfig{WebhookURL: sessionPol.Escalation.WebhookURL}
+			notifyCfg.WebhookURL = sessionPol.Escalation.WebhookURL
 		}
 		escalation.Notify(esc, decision.Reason, notifyCfg)
 		writeJSONRPCEscalated(w, mcpReq.ID, escID)

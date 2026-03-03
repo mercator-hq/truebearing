@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +27,7 @@ func newServeCommand() *cobra.Command {
 	var (
 		upstream     string
 		port         int
+		adminPort    int
 		captureTrace string
 		stdio        bool
 		otelEndpoint string
@@ -185,6 +187,26 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "  capture-trace %s\n", captureTrace)
 			}
 
+			// Start the admin HTTP server on 127.0.0.1:{adminPort} in a goroutine.
+			// The admin server is localhost-only so it is not reachable from the
+			// network — localhost binding is the sole access control for this API.
+			// A bind failure is fatal: operators expect the admin surface to be
+			// available and a silent failure would leave escalations unresolvable.
+			if adminPort > 0 {
+				adminAddr := fmt.Sprintf("127.0.0.1:%d", adminPort)
+				adminLn, lnErr := net.Listen("tcp", adminAddr)
+				if lnErr != nil {
+					return fmt.Errorf("binding admin server on %s: %w", adminAddr, lnErr)
+				}
+				p.SetAdminPort(adminPort)
+				fmt.Fprintf(cmd.OutOrStdout(), "  admin on      %s\n", adminAddr)
+				go func() {
+					if srvErr := http.Serve(adminLn, p.AdminHandler()); srvErr != nil {
+						logger.Error("admin server stopped", "error", srvErr)
+					}
+				}()
+			}
+
 			if err := http.ListenAndServe(addr, p.Handler()); err != nil {
 				return fmt.Errorf("proxy server: %w", err)
 			}
@@ -194,6 +216,7 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 
 	cmd.Flags().StringVar(&upstream, "upstream", "", "upstream MCP server URL (required)")
 	cmd.Flags().IntVar(&port, "port", 7773, "local port to listen on")
+	cmd.Flags().IntVar(&adminPort, "admin-port", 7774, "localhost-only admin API port for escalation approve/reject (0 to disable)")
 	cmd.Flags().StringVar(&captureTrace, "capture-trace", "", "write all MCP traffic to a JSONL trace file")
 	cmd.Flags().BoolVar(&stdio, "stdio", false, "accept MCP requests on stdin/stdout instead of HTTP")
 	cmd.Flags().StringVar(&otelEndpoint, "otel-endpoint", "", "OTLP HTTP endpoint for trace emission (e.g. http://localhost:4318); overrides OTEL_EXPORTER_OTLP_ENDPOINT")
