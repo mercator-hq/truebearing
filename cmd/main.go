@@ -20,6 +20,15 @@ import (
 	"github.com/mercator-hq/truebearing/cmd/session"
 )
 
+// version is the build-time version string injected via:
+//
+//	-ldflags="-X github.com/mercator-hq/truebearing/cmd.version=<tag>"
+//
+// When built without ldflags injection (e.g. go run or a development build)
+// it falls back to "dev" so that `truebearing --version` always produces
+// a usable string rather than an empty one.
+var version = "dev"
+
 // Package-level flag variables bound to the root command's persistent flags.
 // These are populated by cobra before PersistentPreRunE runs.
 var (
@@ -40,8 +49,9 @@ func main() {
 // wires viper configuration, and adds all subcommand groups.
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "truebearing",
-		Short: "Sequence-aware MCP proxy with behavioral policy enforcement",
+		Use:     "truebearing",
+		Version: version,
+		Short:   "Sequence-aware MCP proxy with behavioral policy enforcement",
 		Long: `TrueBearing intercepts MCP tool calls and enforces behavioral policies
 that are sequence-aware: they know what happened before the current call.
 

@@ -24,13 +24,16 @@ jobs:
 
       - name: Build static binaries
         run: |
+          # Strip the leading 'v' from the tag (v0.1.0 → 0.1.0) so that
+          # `truebearing --version` prints "truebearing version 0.1.0".
+          VERSION="${GITHUB_REF_NAME#v}"
           for GOOS in linux darwin; do
             for GOARCH in amd64 arm64; do
               output="truebearing-${GOOS}-${GOARCH}"
               # CGO_ENABLED=0 is required: modernc.org/sqlite is pure-Go and the
               # binary must remain a single static executable with no libc dependency.
               CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
-                -ldflags="-s -w" \
+                -ldflags="-s -w -X main.version=${VERSION}" \
                 -o "$output" ./cmd
               sha256sum "$output" > "${output}.sha256"
             done

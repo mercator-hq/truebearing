@@ -2414,18 +2414,21 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 14.6 — Add `--version` flag to root command
-**File:** `cmd/main.go`
-**Why:** M2 (Homebrew formula verification) requires `truebearing --version` to return
-the correct version string. Cobra supports `cmd.Version` but it is not configured.
-This is a 15-minute task that blocks a manual distribution step.
-
-**What to build:**
-- Set `rootCmd.Version` via `-ldflags`:
-  `-X github.com/mercator-hq/truebearing/cmd.version={{.Version}}`
-- The release workflow already uses `-ldflags="-s -w"` — extend to include the
-  version variable injection.
-- `truebearing --version` should print `truebearing version 0.1.0`.
-- **Prerequisite for M2.** Do not tag v0.1.0 until this task is merged.
+**Status:** Complete
+**Files:** `cmd/main.go`, `.github/workflows/release.yml`
+**Notes:**
+- Added package-level `var version = "dev"` in `cmd/main.go`. Default of `"dev"` ensures
+  `truebearing --version` always produces a usable string in development/untagged builds.
+- Set `root.Version = version` in `newRootCommand()`. Cobra's built-in version support
+  registers `--version` / `-v` automatically and outputs `truebearing version <version>`.
+- ldflags path is `main.version` (not the full import path). Go's linker always uses the
+  symbol name `main.<var>` for variables declared in `package main`, regardless of the
+  directory's module-relative path. The task description's `{{.Version}}` template was
+  GoReleaser syntax — not applicable here since release.yml uses a plain shell script.
+- Updated release.yml: extracted `VERSION="${GITHUB_REF_NAME#v}"` (strips `v` prefix from
+  tag, so `v0.1.0` → `0.1.0`), then passed `-X main.version=${VERSION}` in ldflags.
+- Verified: `go build -ldflags="-s -w -X main.version=0.1.0" ./cmd && truebearing --version`
+  prints `truebearing version 0.1.0`. All 16 test packages pass.
 
 ---
 
