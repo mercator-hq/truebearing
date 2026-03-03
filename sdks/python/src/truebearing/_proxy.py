@@ -248,22 +248,26 @@ def _configure_client(
 ) -> object:
     """Reconfigure ``client`` to route through the proxy and inject required headers.
 
-    Returns a new client instance (via ``with_options``) for known SDK types,
-    or the original client unchanged when the SDK is unrecognised. Only the
-    Anthropic SDK is supported in the MVP; the OpenAI SDK path is a no-op
-    stub because TrueBearing targets Anthropic-compatible MCP stacks.
+    Supported client types:
+      - ``anthropic.Anthropic`` (sync)
+      - ``anthropic.AsyncAnthropic`` (async)
 
-    Design: SDK detection uses a try/import guard so the SDK packages are
-    optional runtime dependencies. PolicyProxy works without them when
-    ``proxy_url`` is supplied explicitly and the caller configures headers
-    themselves.
+    Passing any other type raises ``ValueError`` with actionable instructions
+    pointing the caller to the manual ``base_url`` workaround and the
+    integrations documentation.
+
+    Design: silent pass-through for unrecognised SDKs was deliberately removed.
+    An unrecognised client returned unchanged would route tool calls directly to
+    the upstream, bypassing TrueBearing enforcement entirely, with no indication
+    of failure. A loud ValueError at construction time is the correct failure
+    mode for a security proxy (fail-closed).
     """
     extra_headers: dict[str, str] = {}
     if jwt:
         extra_headers["Authorization"] = f"Bearer {jwt}"
     extra_headers["X-TrueBearing-Session-ID"] = session_id
 
-    # Anthropic SDK (anthropic>=0.40): with_options returns a new Anthropic
+    # Anthropic SDK (anthropic>=0.40): with_options returns a new client
     # instance with the supplied overrides applied. base_url routes all API
     # calls through the TrueBearing proxy.
     try:
@@ -274,9 +278,18 @@ def _configure_client(
                 base_url=proxy_url,
                 default_headers=extra_headers,
             )
+        if isinstance(client, anthropic.AsyncAnthropic):
+            return client.with_options(
+                base_url=proxy_url,
+                default_headers=extra_headers,
+            )
     except ImportError:
         pass
 
-    # Unrecognised client: return unchanged. The caller is responsible for
-    # header injection in this case (e.g. via a custom httpx transport).
-    return client
+    raise ValueError(
+        f"Unsupported client type: {type(client).__name__!r}. "
+        "TrueBearing currently supports anthropic.Anthropic and anthropic.AsyncAnthropic. "
+        "To use a different SDK, configure the proxy URL on your client manually: "
+        f"client = YourClient(base_url='{proxy_url}'). "
+        "See https://docs.mercator.dev/integrations for the full list of supported clients."
+    )

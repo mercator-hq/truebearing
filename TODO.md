@@ -2188,7 +2188,7 @@
 
 ---
 
-## Phase 13 — Known Gaps (Pre-Sales / Pitch Accuracy)
+## Phase 13 — Known Gaps (Pre-Sales / Pitch Accuracy) (Addressed in Phase 14, Phase 13 can be ignored)
 
 > **Goal:** Close the remaining gaps between pitch materials and working code, and complete
 > manual distribution steps required before the first real install from a design partner.
@@ -2268,6 +2268,491 @@
   - The publish CI workflow exits 0 on a test tag.
 
 ---
+
+# Mercator / TrueBearing — Pre-Launch TODO
+> Generated post Phase 12 architectural review.
+> Ordered by blast radius: things that kill a demo or destroy trust come first.
+> Manual distribution tasks are at the bottom — numbered but not for the coding agent.
+
+---
+
+## PHASE 14 — Critical Fixes (P0: Breaks demo or trust)
+
+### Task 14.1 — SDK: Raise loud error for non-Anthropic clients
+**File:** `sdks/python/src/truebearing/_proxy.py`
+**Status:** Complete
+**Files:** `sdks/python/src/truebearing/_proxy.py`, `sdks/python/tests/test_proxy.py`
+**Notes:**
+- `_configure_client` now raises `ValueError` for any client type other than
+  `anthropic.Anthropic` or `anthropic.AsyncAnthropic`. The error message names
+  the unsupported type, provides the manual `base_url` workaround, and links to
+  `https://docs.mercator.dev/integrations`.
+- Silent pass-through (`return client`) removed — fail-closed is the correct
+  behaviour for a security proxy per §8 invariant 1.
+- `_fake_anthropic_module()` updated to set `AsyncAnthropic = _FakeAnthropic` so
+  both isinstance branches are exercisable in tests without the real SDK.
+- All existing tests that passed an unrecognised client without an anthropic module
+  patch were updated to use `patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()})`.
+- 4 new tests added: `test_unsupported_client_raises_value_error`,
+  `test_unsupported_client_error_names_the_type`,
+  `test_unsupported_client_error_includes_docs_link`,
+  `test_anthropic_client_does_not_raise`. 25/25 tests pass.
+
+---
+
+### Task 14.2 — SDK: Add native OpenAI client support
+**File:** `sdks/python/src/truebearing/_proxy.py`
+**Why:** Salus supports OpenAI out of the box. Several target design partners (End Close,
+Corvera) may not be using Anthropic. One-line fix that expands our stated surface.
+
+**What to build:**
+- Add `openai` as an optional dependency in `pyproject.toml` (`openai>=1.0.0`).
+- In `_configure_client`, add an `isinstance(client, openai.OpenAI)` branch:
+  `return openai.OpenAI(base_url=proxy_url, api_key=client.api_key)`
+- Same for `openai.AsyncOpenAI`.
+- Use `importlib.util.find_spec("openai")` to guard the import — don't hard-require it.
+- Add unit tests for both sync and async OpenAI client paths.
+- Update the docstring to list supported clients explicitly.
+- **Validation note:** Before marking complete, run an end-to-end test with a real
+  OpenAI client against the proxy. The OpenAI SDK's `base_url` overrides the API
+  endpoint — verify that MCP tool calls route through the proxy correctly and that
+  TrueBearing's interception fires. If the OpenAI MCP client does not support
+  `base_url` routing in a compatible way, document the limitation and leave the
+  manual `base_url` workaround in `docs/integrations/openai.md` as the supported path.
+
+---
+
+### Task 14.3 — Proxy: Return structured retry feedback on deny
+**Files:** `internal/proxy/proxy.go`, `internal/engine/engine.go`
+**Why:** This is Salus's single strongest differentiator. When Salus blocks an action,
+58% of blocked calls self-correct because the agent receives structured feedback on
+*what it needs to do first*. Our current deny returns a JSON-RPC error with a human-readable
+reason string. An LLM agent cannot parse that and retry correctly.
+
+**What to build:**
+- Extend the JSON-RPC error response on deny to include a structured `data` field
+  alongside the `message`. Format:
+  ```json
+  {
+    "code": -32000,
+    "message": "sequence: only_after not satisfied: [verify_invoice, manager_approval]",
+    "data": {
+      "blocked_tool": "execute_wire_transfer",
+      "reason_code": "sequence_only_after",
+      "unsatisfied_prerequisites": ["verify_invoice", "manager_approval"],
+      "suggestion": "Call verify_invoice first, then manager_approval, then retry."
+    }
+  }
+  ```
+- `reason_code` should be a stable machine-readable string, one per evaluator:
+  `sequence_only_after`, `sequence_never_after`, `taint_blocked`, `budget_exceeded`,
+  `escalation_pending`, `may_use_denied`.
+- `unsatisfied_prerequisites` lists the tools that must run before the blocked tool.
+- `suggestion` is a plain-English sentence the agent can inject into its own context
+  as a system message to guide the retry.
+- Add a test: denied call response must contain `error.data.reason_code` and
+  `error.data.suggestion` as non-empty strings.
+
+---
+
+### Task 14.4 — Engine: Fix `never_when` AND/OR logic mismatch
+**File:** `internal/engine/content.go`
+**Why:** Pitch 01 shows `AND` logic combining two content conditions. The engine
+currently fires on `OR` — any single matching condition blocks. An engineer who copies
+the pitch YAML will get over-denial with no error to explain why.
+
+**What to build:**
+- Add an optional `match` field to the `never_when` block: `match: all` (AND) or
+  `match: any` (OR, current default).
+- If `match` is absent, default to `any` (preserving backward compatibility).
+- If `match: all`, all predicates in the `never_when` block must match for the
+  block to trigger.
+- Update the linter (L0xx) to add a new rule: if a `never_when` block has more than
+  one predicate and no `match` field, emit a WARNING recommending explicit `match: any`
+  or `match: all` to avoid ambiguity.
+- Update `policy explain` to render the match logic in plain English:
+  "blocked if ANY of: ..." vs "blocked only if ALL of: ..."
+- Update `testdata` fixtures and tests to cover both modes.
+
+---
+
+### Task 14.5 — Docs/README: Fix the prerequisite gap and pitch alignment
+**Files:** `README.md`, any pitch YAML examples in `docs/`
+**Why:** The README shows the two Python lines without the required setup steps.
+A design partner who reads it before a call and tries to run it will fail at step 1.
+This is a first-impression problem.
+
+**What to build:**
+- Add a "Quick Start" section to README that lists the actual steps in order:
+  1. `brew install mercator-hq/truebearing/truebearing` (or `go install`)
+  2. `truebearing init` (generates scaffold)
+  3. `truebearing agent register <name> --policy ./mercator.policy.yaml`
+  4. `truebearing serve --upstream <url> --policy ./mercator.policy.yaml`
+  5. The two Python lines
+- Immediately above the two Python lines, add a callout: "Prerequisites: steps 1–4
+  above must complete before this works. Takes ~10 minutes on a clean machine."
+- Update the `never_when` YAML example in docs to use explicit `match: any` so it
+  matches the engine behavior after Task 14.4.
+- In `docs/`, add an `integrations/` folder with:
+  - `openai.md`: how to set `base_url` manually for OpenAI clients (until Task 14.2
+    ships a first-class SDK path)
+  - `langchain.md`: 15-line example showing `base_url` config on LangChain's HTTP client
+  - `langraph.md`: same for LangGraph
+
+---
+
+### Task 14.6 — Add `--version` flag to root command
+**File:** `cmd/main.go`
+**Why:** M2 (Homebrew formula verification) requires `truebearing --version` to return
+the correct version string. Cobra supports `cmd.Version` but it is not configured.
+This is a 15-minute task that blocks a manual distribution step.
+
+**What to build:**
+- Set `rootCmd.Version` via `-ldflags`:
+  `-X github.com/mercator-hq/truebearing/cmd.version={{.Version}}`
+- The release workflow already uses `-ldflags="-s -w"` — extend to include the
+  version variable injection.
+- `truebearing --version` should print `truebearing version 0.1.0`.
+- **Prerequisite for M2.** Do not tag v0.1.0 until this task is merged.
+
+---
+
+## PHASE 15 — Competitive Gaps vs Salus (P1: Loses deals)
+
+### Task 15.1 — Session inspect: Mermaid sequence diagram export
+**File:** `cmd/session/inspect.go`
+**Why:** A design partner who wants to show their compliance team, auditor, or investor
+what their agent actually did cannot hand them a JSONL file. A rendered Mermaid diagram
+pasted into Notion or a GitHub PR is immediately readable by non-engineers.
+Zero dependencies, ~2 hours of code, extremely high demo value.
+
+**What to build:**
+- Add `--format mermaid` flag to `truebearing session inspect <id>`.
+- Read the session event rows in order.
+- Output a valid Mermaid `sequenceDiagram` block:
+  ```
+  sequenceDiagram
+      Agent->>Proxy: read_external_email (ALLOWED)
+      Note over Proxy: session tainted
+      Agent->>Proxy: execute_wire_transfer (DENIED)
+      Note over Proxy: reason: taint_blocked
+  ```
+- Tainted steps get a `Note over` annotation showing the taint state change.
+- Denied steps show the `reason_code` from Task 14.3.
+- Escalated steps show `ESCALATED → APPROVED` or `ESCALATED → PENDING`.
+- Output to stdout so it can be piped to a file or pasted directly.
+- Add a test: a known session fixture should produce deterministic Mermaid output.
+
+---
+
+### Task 15.2 — Audit: Compliance evidence report generator
+**Files:** `cmd/audit/report.go` (new file), `cmd/audit/audit.go`
+**Why:** The MVP plan §11.2 specified a structured evidence object format. What was
+built is raw JSONL rows. For Avallon AI (insurance claims), Ritivel (FDA submissions),
+LunaBill (HIPAA), and Vector Legal (legal malpractice), the auditor does not read JSONL.
+They need a human-readable document they can hand to a regulator.
+This is the single most important feature for regulated-vertical design partners.
+
+**What to build:**
+- New command: `truebearing audit report --session <id> [--output report.md]`
+- Reads audit_log rows for the session, the session event rows, and resolves the
+  policy fingerprint to a policy version (if the policy file is on disk, include
+  the policy source; otherwise note the fingerprint only).
+- Generates a Markdown document with sections:
+  - **Evidence Header**: `evidence_id` (UUID v4, generated), `schema_version: "1.0"`,
+    `generated_at`, `session_id`, `agent_name`, `policy_fingerprint`.
+  - **Policy Summary**: output of `policy explain` for the policy version that governed
+    this session.
+  - **Execution Timeline**: table of tool calls in sequence order — timestamp, tool name,
+    decision, reason_code, escalation status.
+  - **Escalation Records**: for any escalation in the session, show what was approved,
+    by whom (the JWT hash of the approver), and when.
+  - **Cryptographic Attestation**: the Ed25519 signature verification summary —
+    number of records, number that verified OK, any TAMPERED findings.
+  - **Regulatory Notes**: a boilerplate paragraph citing EU AI Act Article 9 language
+    about behavioral boundaries and human oversight, with blanks for the organization
+    to fill in the specific system classification.
+- If `--output` is not specified, write to stdout.
+- Add a test: given a fixture session with known audit records, the report output
+  must contain all five sections and the correct record count.
+
+---
+
+### Task 15.3 — Policy: Vertical-specific policy packs for target companies
+**Directory:** `policy-packs/`
+**Why:** When a design partner from Avallon AI or Ritivel first looks at the repo,
+finding a `policy-packs/insurance-claims/` or `policy-packs/life-sciences-regulatory/`
+folder tells them immediately: "these people built this for companies like us."
+This is a conversion tool, not an engineering feature.
+
+**What to build:**
+One policy file per vertical, with inline comments explaining the business rationale
+for each rule. Each policy should be lintable and explainable with zero errors.
+
+- `policy-packs/insurance-claims/claims-processing.policy.yaml`
+  - Sequence guard: `approve_claim` only after `[verify_policy, assess_damage, check_fraud_signals]`
+  - Taint: `read_claimant_pii` taints session; `run_compliance_check` clears
+  - Escalate: claim value > threshold (argument predicate)
+  - Budget: max tool calls per session
+  - Comment block: "Satisfies state insurance regulatory audit trail requirements"
+
+- `policy-packs/legal-ops/privileged-document-guard.policy.yaml`
+  - Taint: `read_privileged_document` taints session
+  - `never_after`: `transmit_to_external` if session tainted
+  - Escalate: any action on matter with `status: active_litigation`
+  - Comment: "Addresses attorney-client privilege protection for agentic document review"
+
+- `policy-packs/life-sciences/regulatory-submission.policy.yaml`
+  - Sequence: `submit_to_fda` only after `[generate_draft, internal_review, legal_sign_off]`
+  - `never_after`: `submit_to_fda` if `amend_document` ran after `legal_sign_off`
+  - Escalate: any `submit_*` action
+  - Comment: "Supports 21 CFR Part 11 electronic records requirements"
+
+- `policy-packs/healthcare-billing/hipaa-billing-guard.policy.yaml`
+  - Update the existing LunaBill pack with a `requires_prior_n` for multi-step
+    PHI access approval and explicit HIPAA citation in comments.
+
+For each: run `truebearing policy lint` in CI to verify zero errors.
+
+---
+
+### Task 15.4 — README: Competitive positioning section
+**File:** `README.md`
+**Why:** Design partners at regulated companies will google "agent guardrails" before
+your first call and find Salus. You want them to arrive at your README already knowing
+where you fit relative to Salus, not confused about whether you're the same thing.
+
+**What to build:**
+Add a "How Mercator differs from other guardrail tools" section with a comparison table:
+
+| | Mercator | Salus | LangChain Guardrails |
+|---|---|---|---|
+| Agent code changes required | None (proxy) | Yes (decorators) | Yes (middleware) |
+| Policy lives outside agent | ✓ | ✗ | ✗ |
+| Stateful sequence enforcement | ✓ | ✓ | ✗ |
+| Tamper-evident audit trail | ✓ (Ed25519) | ✗ | ✗ |
+| Works with existing agents | ✓ | ✗ | ✗ |
+| EU AI Act evidence bundles | ✓ | ✗ | ✗ |
+| Self-repair feedback to agent | ✓ (after Task 14.3) | ✓ | ✗ |
+| OpenAI / LangChain support | ✓ (proxy layer) | ✓ | ✓ |
+
+Add one paragraph below the table: "If you control your agent code and want decorator-based
+enforcement with self-repair, Salus is excellent. If you need policy enforcement without
+touching agent code, a tamper-evident audit trail for regulators, or you're in a regulated
+industry where compliance teams define policy — that's what Mercator is built for."
+
+**Prerequisite:** Task 14.3 must be merged before publishing this README section.
+The "self-repair feedback to agent" cell is aspirational until that task ships —
+a design partner who reads it and inspects a deny response will not find
+`error.data.reason_code` in the payload.
+
+---
+
+### Task 15.5 — Escalation: HTTP approval endpoint
+**File:** `internal/proxy/proxy.go` (or new `internal/proxy/admin.go`)
+**Why:** The current escalation approval model requires CLI access to the machine
+running the proxy. For any team where the approver (compliance officer, CFO) is not
+the same person as the operator, this is a blocker. Every multi-person team evaluating
+the product will ask this question first.
+
+**What to build:**
+- Add a simple admin HTTP API (localhost-only by default):
+  - `GET /admin/escalations?status=pending` — list pending escalations
+  - `POST /admin/escalations/{id}/approve` with JSON body `{"note": "..."}`
+  - `POST /admin/escalations/{id}/reject` with JSON body `{"reason": "..."}`
+- These endpoints call the same internal functions as the CLI escalation commands —
+  no new business logic, just an HTTP surface over the existing escalation state machine.
+- Bind to a separate port (default: 7774). Add `--admin-port` flag to `truebearing serve`
+  so it is clearly distinct from the proxy port (default: 7771).
+- Include the admin endpoint URL in the webhook notification payload so the webhook
+  recipient can approve with a single `curl` command.
+- Add tests: approve via HTTP transitions escalation status to `approved`; reject via
+  HTTP transitions to `rejected`. Verify the agent's next `check_escalation_status`
+  call returns the correct state.
+
+---
+
+## PHASE 16 — Technical Debt (P2: Will bite in 90 days)
+
+### Task 16.1 — Consolidate triple AuditRecord struct
+**Files:** `internal/store/audit.go`, `internal/audit/audit.go`, `cmd/audit/replay.go`
+**Why:** Three separate `AuditRecord`-like structs. Task 8.2 patched the worst
+JSON tag inconsistency but the structural problem remains. Any schema change now
+requires updating all three, and this has already caused one production bug.
+
+**What to build:**
+- Define a canonical `AuditRecord` struct in `internal/audit/types.go` (or promote
+  to `pkg/audit/types.go` if the circular import is resolvable).
+- The canonical struct must have correct snake_case JSON tags, `omitempty` where
+  appropriate, and all fields that any of the three current structs use.
+- Refactor `internal/store` to use the canonical type for reads and writes.
+- Refactor `cmd/audit/replay.go` to use it instead of its local `auditLogLine`.
+- The `internal/audit` signing/verification logic should reference the same type.
+- After refactor: `grep -r "AuditRecord\|auditLogLine" .` should return only the
+  canonical definition and its usages — no parallel struct definitions.
+- All existing audit tests must pass without modification (they are the regression guard).
+
+---
+
+### Task 16.2 — Fix polByFingerprint memory growth
+**File:** `cmd/serve.go` (or wherever the fingerprint map lives in the serve path)
+**Why:** Every SIGHUP hot-reload adds a new entry to `polByFingerprint` that is never
+evicted. For a team doing daily GitOps policy pushes over months, this is an unbounded
+memory leak. Not a problem for design partner demos; will be a problem at the 90-day mark.
+
+**What to build:**
+- Add a max-size cap to `polByFingerprint` (LRU with capacity 16 is sufficient —
+  no real-world deployment needs more than 16 live policy versions simultaneously).
+- On eviction, log at `slog.Debug` level: "evicting policy version <fingerprint>".
+- Sessions holding a reference to an evicted fingerprint should: on their next tool call,
+  re-resolve against the current policy and log a warning that the original policy
+  version is no longer cached. Do not hard-fail the session.
+- Add a test: load 20 distinct policy fingerprints, verify map size stays ≤ 16.
+
+---
+
+### Task 16.3 — Audit write failure: make gaps detectable
+**File:** `internal/proxy/proxy.go` (audit.Write error handling)
+**Why:** Current behavior: if `audit.Write` fails, the proxy logs the failure and
+allows the tool call to proceed. An attacker who can induce consistent write failures
+gets an ungoverned window with no signal to the operator.
+
+**What to build:**
+- Add a counter metric (or structured log field) that increments on every `audit.Write`
+  failure: `audit_write_failures_total`.
+- Expose this on the `/health` endpoint: if `audit_write_failures_total > 0`, include
+  `"audit_degraded": true` in the health JSON response (but keep HTTP 200 — the proxy
+  is still serving).
+- Add a `--audit-strict` flag to `serve`. When set, a failed `audit.Write` causes the
+  proxy to return a deny for that tool call rather than allowing it through. Default off
+  (preserving current behavior) but document it as the recommended production setting.
+- Add a test: simulate a write failure, verify `audit_degraded: true` appears in health.
+
+---
+
+### Task 16.4 — Fix rate-limit timestamp accuracy in simulate/replay
+**Files:** `cmd/simulate.go`, `cmd/audit/replay.go`
+**Why:** `RateLimitEvaluator.Evaluate()` uses `call.RequestedAt` to determine rate
+windows, but `AppendEvent` overwrites `RecordedAt` with `time.Now()`. In simulate and
+replay, all events are effectively timestamped "now", collapsing the original time
+distribution and producing incorrect rate-limit decisions for historical traces.
+Task 9.3 implementation notes flag this explicitly as a known issue. If the simulate
+demo is the trust-builder, and simulate gives wrong answers for rate-limited policies,
+that is a demo risk.
+
+**What to build:**
+- When appending events in the simulate/replay in-memory store, set
+  `event.RecordedAt = call.RequestedAt.UnixNano()` explicitly, bypassing
+  `AppendEvent`'s auto-timestamp for the historical replay path.
+- Add a test: a trace with 6 calls to `search_web` over 10 minutes should NOT trigger
+  a `rate_limit` of `5/minute` when simulated, because the calls are spread across
+  10 minutes in the original trace timestamps.
+
+---
+
+## PHASE 17 — DX Polish (P3: Matters for design partner retention)
+
+### Task 17.1 — `truebearing init`: add vertical-aware scaffolding
+**File:** `cmd/init.go`
+**Why:** Currently `truebearing init` generates a generic policy scaffold. A developer
+at Avallon AI should be offered an insurance-claims policy pack immediately, not a
+blank template. The five questions in init should branch based on vertical selection.
+
+**What to build:**
+- Add a "What best describes your agent?" question to the init flow with options:
+  `finance/payments`, `healthcare/HIPAA`, `legal/privileged-docs`,
+  `life-sciences/regulatory`, `devops/infra`, `other`.
+- Based on selection, copy the appropriate policy pack from `policy-packs/` as the
+  starting point instead of the blank template.
+- After generating the file, automatically run `truebearing policy lint` on it and
+  print the result. The generated file should lint clean — if it doesn't, that's a
+  bug in the policy pack.
+- Add a test: `init --vertical healthcare` should produce a file that lints with
+  zero errors.
+
+---
+
+### Task 17.2 — `truebearing policy lint`: add shadow mode check
+**File:** `cmd/policy/lint.go`
+**Why:** A developer who runs `truebearing serve` with `enforcement_mode: block` on
+day one of integration will likely break their agent. Shadow mode should be the
+recommended starting point. The linter should nudge this.
+
+**What to build:**
+- Add lint rule `L019`: if any tool in the policy has `enforcement_mode: block` and
+  the policy has not been previously deployed (no audit records exist for this
+  fingerprint), emit a WARNING: "Consider starting with `enforcement_mode: shadow`
+  to observe enforcement before blocking. Use `truebearing audit query` to review
+  what would have been blocked."
+- **Note:** Rules L014 and L015 are already taken by Task 9.1 (content predicates:
+  unknown operator, invalid regex). This rule is L019 to avoid collision.
+- Severity: WARN (not ERROR — blocking mode is valid and intentional for some teams).
+- This requires the linter to optionally accept a `--db` flag pointing at the SQLite
+  store. If no `--db` is provided, skip L019 silently (the linter must still be
+  usable without a running proxy).
+
+---
+
+### Task 17.3 — Node.js SDK: raise loud error for unsupported clients
+**File:** `sdks/node/src/proxy.ts` (or equivalent)
+**Why:** Same silent failure risk as the Python SDK (Task 14.1), but for Node.js.
+Applies to any Node agent using non-Anthropic clients.
+
+**What to build:**
+- Mirror Task 14.1 exactly in the Node SDK.
+- If the passed client is not an Anthropic SDK instance, throw a `TypeError` with the
+  manual `baseURL` configuration snippet.
+- If the client is the Anthropic Node SDK, configure via `baseURL` option.
+- Add OpenAI Node SDK support: detect `openai` package, set `baseURL` on the
+  `OpenAI` constructor options.
+- Unit tests for both paths.
+
+---
+
+## Manual Distribution Tasks
+> Not for the coding agent. Do these yourself after the above tasks are merged.
+> Ordered by dependency — each step may unblock the next.
+
+**M1 — Tag the release**
+Run `git tag v0.1.0 && git push origin v0.1.0`. This triggers the GitHub Actions
+release workflow. Wait for it to complete and confirm that binaries for
+`darwin-arm64`, `darwin-amd64`, `linux-amd64`, and `linux-arm64` appear in the
+GitHub release assets before doing anything else below.
+
+**M2 — Fix the Homebrew formula SHA256**
+Download the `darwin-arm64` tarball from the v0.1.0 release. Run
+`shasum -a 256 <tarball>`. Copy the hash into `Formula/truebearing.rb`.
+Do the same for `darwin-amd64` if the formula covers both architectures.
+Push the formula update. On a clean Mac (or a new shell), run
+`brew install mercator-hq/truebearing/truebearing` and verify it installs and
+`truebearing --version` returns the correct version string.
+
+**M3 — Reserve PyPI package name**
+Go to pypi.org, log in (or create an account under the mercator-hq org).
+Reserve `truebearing` as a package name by uploading a minimal `0.0.1` stub if
+the name isn't already claimed. Then push the `sdk/python/v0.1.0` tag to trigger
+the CI publish workflow for the real `0.1.0` release.
+Verify: `pip install truebearing` on a clean virtualenv installs without error.
+
+**M4 — Create npm @mercator org and publish**
+Go to npmjs.com and create the `@mercator` organization (or verify it exists and
+you have publish rights). Push the `sdk/node/v0.1.0` tag to trigger the CI npm
+publish workflow. Verify: `npm install @mercator/truebearing` installs without error.
+
+**M5 — Verify end-to-end on a clean machine**
+On a machine with none of the tools pre-installed, follow the README Quick Start
+section exactly as a design partner would. Time it. If it takes more than 10 minutes,
+find the friction point and fix the docs before any outreach.
+
+**M6 — Set up mercator.dev/docs redirect**
+The README and error messages reference `https://docs.mercator.dev/integrations`.
+Either set up a real docs site (Mintlify or Docusaurus, one hour to scaffold) or
+set up a redirect from that URL to the GitHub `docs/` folder. The link must not 404.
+
+**M7 — Create a public GitHub Discussions or Discord**
+Pitch 04 references `mercator.dev/discord`. Design partners who have questions
+after trying the tool need somewhere to ask them. A GitHub Discussions tab takes
+5 minutes to enable and requires no maintenance overhead.
 
 ## Maintenance Notes
 

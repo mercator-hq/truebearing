@@ -24,6 +24,10 @@ from truebearing._proxy import _find_free_port, _resolve_jwt
 class _FakeAnthropic:
     """Minimal anthropic.Anthropic substitute that records with_options calls."""
 
+    # Class-level attribute so all instances (including those returned by
+    # with_options) expose proxy.messages for the delegation test.
+    messages = "messages-object"
+
     def __init__(self, base_url=None, default_headers=None):
         self.base_url = base_url
         self.default_headers = default_headers or {}
@@ -36,9 +40,11 @@ class _FakeAnthropic:
 
 
 def _fake_anthropic_module():
-    """Return a mock of the anthropic module whose Anthropic class is _FakeAnthropic."""
+    """Return a mock of the anthropic module with _FakeAnthropic as both client classes."""
     mod = MagicMock()
     mod.Anthropic = _FakeAnthropic
+    # AsyncAnthropic uses the same fake so isinstance checks work for both branches.
+    mod.AsyncAnthropic = _FakeAnthropic
     return mod
 
 
@@ -88,27 +94,30 @@ def test_resolve_jwt_none_when_nothing_provided(monkeypatch):
 
 
 def test_session_id_generated_when_not_provided():
-    proxy = PolicyProxy(
-        _FakeAnthropic(),
-        proxy_url="http://localhost:7773",
-    )
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        proxy = PolicyProxy(
+            _FakeAnthropic(),
+            proxy_url="http://localhost:7773",
+        )
     # Must be a valid uuid4.
     parsed = uuid.UUID(proxy._session_id)
     assert parsed.version == 4
 
 
 def test_session_id_explicit_preserved():
-    proxy = PolicyProxy(
-        _FakeAnthropic(),
-        proxy_url="http://localhost:7773",
-        session_id="explicit-session-id",
-    )
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        proxy = PolicyProxy(
+            _FakeAnthropic(),
+            proxy_url="http://localhost:7773",
+            session_id="explicit-session-id",
+        )
     assert proxy._session_id == "explicit-session-id"
 
 
 def test_two_proxies_get_different_session_ids():
-    p1 = PolicyProxy(_FakeAnthropic(), proxy_url="http://localhost:7773")
-    p2 = PolicyProxy(_FakeAnthropic(), proxy_url="http://localhost:7773")
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        p1 = PolicyProxy(_FakeAnthropic(), proxy_url="http://localhost:7773")
+        p2 = PolicyProxy(_FakeAnthropic(), proxy_url="http://localhost:7773")
     assert p1._session_id != p2._session_id
 
 
@@ -178,11 +187,8 @@ def test_trailing_slash_stripped_from_proxy_url():
 
 def test_getattr_delegates_to_wrapped_client():
     """proxy.messages delegates to the reconfigured client.messages."""
-
-    class _Client:
-        messages = "messages-object"
-
-    proxy = PolicyProxy(_Client(), proxy_url="http://localhost:7773")
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        proxy = PolicyProxy(_FakeAnthropic(), proxy_url="http://localhost:7773")
     assert proxy.messages == "messages-object"
 
 
@@ -206,6 +212,7 @@ def test_subprocess_spawned_with_correct_args(tmp_path):
     mock_proc = _make_mock_proc()
 
     with (
+        patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}),
         patch("truebearing._proxy.subprocess.Popen", return_value=mock_proc) as mock_popen,
         patch("truebearing._proxy._find_free_port", return_value=19997),
         patch("truebearing._proxy.PolicyProxy._wait_for_ready"),
@@ -235,6 +242,7 @@ def test_subprocess_uses_provided_upstream(tmp_path):
     mock_proc = _make_mock_proc()
 
     with (
+        patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}),
         patch("truebearing._proxy.subprocess.Popen", return_value=mock_proc) as mock_popen,
         patch("truebearing._proxy._find_free_port", return_value=19996),
         patch("truebearing._proxy.PolicyProxy._wait_for_ready"),
@@ -257,6 +265,7 @@ def test_subprocess_output_is_suppressed(tmp_path):
     mock_proc = _make_mock_proc()
 
     with (
+        patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}),
         patch("truebearing._proxy.subprocess.Popen", return_value=mock_proc) as mock_popen,
         patch("truebearing._proxy._find_free_port", return_value=19995),
         patch("truebearing._proxy.PolicyProxy._wait_for_ready"),
@@ -274,7 +283,10 @@ def test_subprocess_output_is_suppressed(tmp_path):
 
 def test_no_subprocess_with_explicit_proxy_url():
     """No subprocess is spawned when proxy_url is supplied."""
-    with patch("truebearing._proxy.subprocess.Popen") as mock_popen:
+    with (
+        patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}),
+        patch("truebearing._proxy.subprocess.Popen") as mock_popen,
+    ):
         proxy = PolicyProxy(
             _FakeAnthropic(),
             proxy_url="http://localhost:7773",
@@ -291,6 +303,7 @@ def test_context_manager_terminates_subprocess(tmp_path):
     mock_proc = _make_mock_proc()
 
     with (
+        patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}),
         patch("truebearing._proxy.subprocess.Popen", return_value=mock_proc),
         patch("truebearing._proxy._find_free_port", return_value=19994),
         patch("truebearing._proxy.PolicyProxy._wait_for_ready"),
@@ -312,6 +325,7 @@ def test_shutdown_idempotent(tmp_path):
     mock_proc = _make_mock_proc()
 
     with (
+        patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}),
         patch("truebearing._proxy.subprocess.Popen", return_value=mock_proc),
         patch("truebearing._proxy._find_free_port", return_value=19993),
         patch("truebearing._proxy.PolicyProxy._wait_for_ready"),
@@ -366,3 +380,44 @@ def test_wait_for_ready_raises_on_timeout(tmp_path):
             )
 
     mock_proc.terminate.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Unsupported client type (Task 14.1)
+# ---------------------------------------------------------------------------
+
+
+def test_unsupported_client_raises_value_error():
+    """Passing an unrecognised client type raises ValueError with actionable instructions."""
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        with pytest.raises(ValueError, match="Unsupported client type"):
+            PolicyProxy(MagicMock(), proxy_url="http://localhost:7773")
+
+
+def test_unsupported_client_error_names_the_type():
+    """ValueError message names the actual unsupported type for easy diagnosis."""
+
+    class _OpenAILike:
+        pass
+
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        with pytest.raises(ValueError, match="_OpenAILike"):
+            PolicyProxy(_OpenAILike(), proxy_url="http://localhost:7773")
+
+
+def test_unsupported_client_error_includes_docs_link():
+    """ValueError message includes the integrations documentation link."""
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        with pytest.raises(ValueError, match="docs.mercator.dev/integrations"):
+            PolicyProxy(MagicMock(), proxy_url="http://localhost:7773")
+
+
+def test_anthropic_client_does_not_raise():
+    """A recognised anthropic.Anthropic instance is accepted without error."""
+    with patch.dict("sys.modules", {"anthropic": _fake_anthropic_module()}):
+        proxy = PolicyProxy(
+            _FakeAnthropic(),
+            proxy_url="http://localhost:7773",
+            agent_jwt="jwt",
+        )
+    assert proxy._client is not None
