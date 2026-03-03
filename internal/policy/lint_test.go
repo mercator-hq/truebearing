@@ -1639,3 +1639,124 @@ tools:
 		})
 	}
 }
+
+// TestLintL020 verifies that L020 warns when a block-mode policy has no
+// deployment history and is silent when history exists or when the policy does
+// not use block enforcement.
+func TestLintL020(t *testing.T) {
+	cases := []struct {
+		name                 string
+		yaml                 string
+		hasDeploymentHistory bool
+		wantHit              bool
+	}{
+		{
+			name: "global block with no history fires L020",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - tool_a
+`,
+			hasDeploymentHistory: false,
+			wantHit:              true,
+		},
+		{
+			name: "global block with history suppresses L020",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: block
+may_use:
+  - tool_a
+`,
+			hasDeploymentHistory: true,
+			wantHit:              false,
+		},
+		{
+			name: "global shadow with no history does not fire L020",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: shadow
+may_use:
+  - tool_a
+`,
+			hasDeploymentHistory: false,
+			wantHit:              false,
+		},
+		{
+			name: "per-tool block with no history fires L020",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: shadow
+may_use:
+  - tool_a
+tools:
+  tool_a:
+    enforcement_mode: block
+`,
+			hasDeploymentHistory: false,
+			wantHit:              true,
+		},
+		{
+			name: "per-tool block with history suppresses L020",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: shadow
+may_use:
+  - tool_a
+tools:
+  tool_a:
+    enforcement_mode: block
+`,
+			hasDeploymentHistory: true,
+			wantHit:              false,
+		},
+		{
+			name: "neither global nor per-tool block does not fire L020",
+			yaml: `
+version: "1"
+agent: data-agent
+enforcement_mode: shadow
+may_use:
+  - tool_a
+tools:
+  tool_a: {}
+`,
+			hasDeploymentHistory: false,
+			wantHit:              false,
+		},
+		{
+			name: "unset enforcement_mode with no history does not fire L020",
+			yaml: `
+version: "1"
+agent: data-agent
+may_use:
+  - tool_a
+`,
+			hasDeploymentHistory: false,
+			wantHit:              false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustParseBytes(t, tc.yaml)
+			results := policy.LintL020(p, tc.hasDeploymentHistory)
+			got := hasCode(results, "L020")
+			if got != tc.wantHit {
+				t.Errorf("hasCode(results, \"L020\") = %v, want %v; results: %v", got, tc.wantHit, results)
+			}
+			if tc.wantHit {
+				for _, r := range results {
+					if r.Code == "L020" && r.Severity != policy.SeverityWarning {
+						t.Errorf("L020 severity = %q, want WARNING", r.Severity)
+					}
+				}
+			}
+		})
+	}
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -117,6 +118,28 @@ func (s *Store) QueryAuditLog(filters AuditFilter) ([]AuditRecord, error) {
 		return nil, fmt.Errorf("iterating audit log query results: %w", err)
 	}
 	return records, nil
+}
+
+// HasAuditRecordsForFingerprint reports whether any audit record with the
+// given policy fingerprint exists in the log. It is used by the policy linter
+// (L020) to determine whether a block-mode policy has been previously deployed
+// with real traffic.
+//
+// The query uses a LIMIT 1 scan rather than COUNT(*) so SQLite short-circuits
+// on the first matching row without scanning the full table.
+func (s *Store) HasAuditRecordsForFingerprint(fingerprint string) (bool, error) {
+	var id string
+	err := s.db.QueryRow(
+		`SELECT id FROM audit_log WHERE policy_fingerprint = ? LIMIT 1`,
+		fingerprint,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking audit records for fingerprint %s: %w", fingerprint, err)
+	}
+	return true, nil
 }
 
 // AppendAuditRecord inserts a signed audit log entry into the append-only

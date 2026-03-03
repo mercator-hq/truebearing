@@ -353,7 +353,7 @@
     `TestLint_L013_MessageFormat` (exact message structure), `TestLint_CleanPolicy` (zero results),
     `TestLint_SeverityValues` (string constants), `TestLint_AllValidOperatorsPassL012` (8 operators).
   - `internal/policy/types.go` — MODIFIED: added `EscalationConfig` struct and `Escalation
-  *EscalationConfig` field to `Policy`. Uses pointer + `json:",omitempty"` so policies that omit
+*EscalationConfig` field to `Policy`. Uses pointer + `json:",omitempty"` so policies that omit
     the `escalation:` block produce identical fingerprints to pre-2.2 policies.
     **Notes:**
   - L013 uses three-colour DFS (white/gray/black), not Kahn's algorithm. DFS was chosen because it
@@ -2197,8 +2197,8 @@
 ---
 
 - [x] **Task 13.1** — WASM-compiled policy engine
-  **Status:** Complete
-  **Files:**
+      **Status:** Complete
+      **Files:**
   - `internal/engine/backend.go` — new: `QueryBackend` interface, `SessionEventEntry`, `ApprovedEscalationEntry`, `ErrParentAgentNotFound`
   - `internal/engine/storebackend.go` — new: `StoreBackend` adapter (build-tagged `!wasip1 && !(js && wasm)`)
   - `internal/engine/membackend.go` — new: `MemBackend` in-memory implementation for WASM + tests
@@ -2219,7 +2219,7 @@
   - `sdks/node/src/index.ts` — modified: exports `WasmEngine` and its types
   - `docs/demo-script.md` — modified: WASM FAQ entry with build commands and latency numbers
   - Engine test files (`sequence_test.go`, `ratelimit_test.go`, `escalation_test.go`, `delegation_test.go`, `integration_test.go`) — modified: `Store: st` → `Store: &engine.StoreBackend{Store: st}`
-  **Notes:**
+    **Notes:**
   - The `StoreBackend` adapter is excluded from WASM builds via `//go:build !wasip1 && !(js && wasm)` on `storebackend.go`. This breaks the `internal/engine` → `internal/store` → `modernc.org/sqlite` transitive dependency for WASM targets.
   - The WASM entry point uses `GOOS=js GOARCH=wasm` for the Node.js shim (synchronous function call via `syscall/js`). The `GOOS=wasip1 GOARCH=wasm` target is also buildable (stdin/stdout JSON loop) — `GOOS=wasip1 GOARCH=wasm go build -o truebearing-wasi.wasm ./cmd/wasm/` exits 0.
   - `cmd/wasm/core.go` has build tag `//go:build js || wasip1` so `go build ./...` (native) skips the package cleanly.
@@ -2230,46 +2230,47 @@
 ---
 
 - [ ] **Task 13.2** — Homebrew formula SHA256: replace placeholder before first tagged release
-  **Priority:** P0 — blocks `brew install` from working. The formula at [Formula/truebearing.rb](Formula/truebearing.rb) has a placeholder `000...000` SHA256 hash. Any user who follows the Homebrew install path will get a checksum mismatch error.
-  **Scope:**
+      **Priority:** P0 — blocks `brew install` from working. The formula at [Formula/truebearing.rb](Formula/truebearing.rb) has a placeholder `000...000` SHA256 hash. Any user who follows the Homebrew install path will get a checksum mismatch error.
+      **Scope:**
   - Tag a release (`v0.1.0` or the agreed first release tag) and let the CI release workflow build the four binary archives.
   - For each platform archive, run `sha256sum truebearing_<os>_<arch>.tar.gz` and record the hash.
   - Update `Formula/truebearing.rb`: replace the placeholder `sha256` lines with the real hashes for each `url`/`sha256` pair.
   - Smoke-test on a clean macOS machine: `brew tap mercator-hq/truebearing <repo-url> && brew install mercator-hq/truebearing/truebearing`.
-  **Satisfaction check:**
+    **Satisfaction check:**
   - `brew install` completes without checksum error on macOS arm64 and amd64.
   - The installed binary reports the correct version via `truebearing --version` (add a `--version` flag if not present).
-  **Note:** This task cannot be completed until a GitHub Release is tagged and the CI release workflow has run. It is a blocking dependency on cutting the first public release.
+    **Note:** This task cannot be completed until a GitHub Release is tagged and the CI release workflow has run. It is a blocking dependency on cutting the first public release.
 
 ---
 
 - [ ] **Task 13.3** — PyPI name reservation: confirm `truebearing` is available and reserve it
-  **Priority:** P0 — blocks `pip install truebearing` from working for anyone who is not us. If the name is taken by a squatter or an unrelated project, the publish workflow (Task 11.3) will fail on the first `twine upload`.
-  **Scope:**
+      **Priority:** P0 — blocks `pip install truebearing` from working for anyone who is not us. If the name is taken by a squatter or an unrelated project, the publish workflow (Task 11.3) will fail on the first `twine upload`.
+      **Scope:**
   - Check `https://pypi.org/project/truebearing/` — if taken, evaluate alternatives (`truebearing-proxy`, `mercator-truebearing`) and update `sdks/python/pyproject.toml` and the README accordingly.
   - If available: publish a `v0.0.1` placeholder release to reserve the name before the full SDK is ready. The placeholder can be a single `__init__.py` with a `raise ImportError("truebearing is not yet released — check back soon")`.
   - Confirm the `PYPI_TOKEN` secret is added to the GitHub repository settings (required by the publish workflow).
   - Run the publish workflow manually (`workflow_dispatch` or push a `sdk/python/v0.0.1` tag) to verify end-to-end.
-  **Satisfaction check:**
+    **Satisfaction check:**
   - `pip install truebearing` succeeds on a clean machine and installs the Mercator package (not an unrelated project).
   - The publish CI workflow exits 0 on a test tag.
 
 ---
 
 - [ ] **Task 13.4** — npm org scope: create `@mercator` org and reserve `@mercator/truebearing`
-  **Priority:** P0 — blocks `npm install @mercator/truebearing` from working. Scoped npm packages require the org (`@mercator`) to exist and the publishing account to be a member.
-  **Scope:**
+      **Priority:** P0 — blocks `npm install @mercator/truebearing` from working. Scoped npm packages require the org (`@mercator`) to exist and the publishing account to be a member.
+      **Scope:**
   - Create the `@mercator` org on `npmjs.com` (or verify it already exists and the account has publish access).
   - Publish a `v0.0.1` placeholder package to reserve `@mercator/truebearing`. The placeholder can export `throw new Error("not yet released")`.
   - Add `NPM_TOKEN` secret to the GitHub repository settings (required by the publish workflow in Task 11.4).
   - Run the publish workflow manually (push `sdk/node/v0.0.1` tag) to verify the CI path is correct end-to-end.
-  **Satisfaction check:**
+    **Satisfaction check:**
   - `npm install @mercator/truebearing` succeeds on a clean machine and installs the Mercator package.
   - The publish CI workflow exits 0 on a test tag.
 
 ---
 
 # Mercator / TrueBearing — Pre-Launch TODO
+
 > Generated post Phase 12 architectural review.
 > Ordered by blast radius: things that kill a demo or destroy trust come first.
 > Manual distribution tasks are at the bottom — numbered but not for the coding agent.
@@ -2279,10 +2280,12 @@
 ## PHASE 14 — Critical Fixes (P0: Breaks demo or trust)
 
 ### Task 14.1 — SDK: Raise loud error for non-Anthropic clients
+
 **File:** `sdks/python/src/truebearing/_proxy.py`
 **Status:** Complete
 **Files:** `sdks/python/src/truebearing/_proxy.py`, `sdks/python/tests/test_proxy.py`
 **Notes:**
+
 - `_configure_client` now raises `ValueError` for any client type other than
   `anthropic.Anthropic` or `anthropic.AsyncAnthropic`. The error message names
   the unsupported type, provides the manual `base_url` workaround, and links to
@@ -2301,28 +2304,30 @@
 ---
 
 ### Task 14.2 — SDK: Add native OpenAI client support
+
 **Status:** Complete
 **Files:** `sdks/python/src/truebearing/_proxy.py`, `sdks/python/pyproject.toml`, `sdks/python/tests/test_proxy.py`
 **Notes:** Added `openai.OpenAI` and `openai.AsyncOpenAI` branches to `_configure_client`
-  using the same `try/except ImportError` guard as the existing Anthropic block. Used
-  `try/except ImportError` rather than `importlib.util.find_spec` (spec'd in the task):
-  `find_spec` raises `ValueError` when the module in `sys.modules` is a `MagicMock`
-  (because `MagicMock().__spec__` is `None`), making it incompatible with the test patching
-  approach. `try/except` is idiomatic Python and consistent with the Anthropic block.
-  OpenAI clients are reconfigured via constructor (`openai.OpenAI(base_url=..., api_key=...,
+using the same `try/except ImportError` guard as the existing Anthropic block. Used
+`try/except ImportError` rather than `importlib.util.find_spec` (spec'd in the task):
+`find_spec` raises `ValueError` when the module in `sys.modules` is a `MagicMock`
+(because `MagicMock().__spec__` is `None`), making it incompatible with the test patching
+approach. `try/except` is idiomatic Python and consistent with the Anthropic block.
+OpenAI clients are reconfigured via constructor (`openai.OpenAI(base_url=..., api_key=...,
   default_headers=...)`) — openai>=1.0 does not expose `with_options`. Only `base_url`,
-  `api_key`, and `default_headers` are forwarded; other settings (timeout, max_retries)
-  fall back to SDK defaults (noted in a Design comment in code).
-  7 new tests added: sync configured, sync api_key forwarded, async configured, async api_key
-  forwarded, sync does not raise, async does not raise, session_id header matches. 32/32 pass.
-  Live end-to-end test with a real OpenAI client was not run — mark for verification at first
-  design partner demo. The OpenAI SDK `base_url` override is standard; no known incompatibility.
+`api_key`, and `default_headers` are forwarded; other settings (timeout, max_retries)
+fall back to SDK defaults (noted in a Design comment in code).
+7 new tests added: sync configured, sync api_key forwarded, async configured, async api_key
+forwarded, sync does not raise, async does not raise, session_id header matches. 32/32 pass.
+Live end-to-end test with a real OpenAI client was not run — mark for verification at first
+design partner demo. The OpenAI SDK `base_url` override is standard; no known incompatibility.
 
 **File:** `sdks/python/src/truebearing/_proxy.py`
 **Why:** Salus supports OpenAI out of the box. Several target design partners (End Close,
 Corvera) may not be using Anthropic. One-line fix that expands our stated surface.
 
 **What to build:**
+
 - Add `openai` as an optional dependency in `pyproject.toml` (`openai>=1.0.0`).
 - In `_configure_client`, add an `isinstance(client, openai.OpenAI)` branch:
   `return openai.OpenAI(base_url=proxy_url, api_key=client.api_key)`
@@ -2340,8 +2345,10 @@ Corvera) may not be using Anthropic. One-line fix that expands our stated surfac
 ---
 
 ### Task 14.3 — Proxy: Return structured retry feedback on deny
+
 **Status:** Complete
 **Files:**
+
 - `internal/engine/types.go` — Added `DenyFeedback` struct and `Feedback *DenyFeedback` field to `Decision`
 - `internal/engine/mayuse.go` — `reason_code: "may_use_denied"`
 - `internal/engine/budget.go` — `reason_code: "budget_exceeded"`
@@ -2356,6 +2363,7 @@ Corvera) may not be using Anthropic. One-line fix that expands our stated surfac
 - `internal/proxy/proxy_test.go` — `TestProxy_DenyResponse_ContainsStructuredFeedback` verifies `error.data.reason_code == "may_use_denied"` and non-empty `error.data.suggestion` and `error.data.blocked_tool`
 
 **Notes:**
+
 - `writeJSONRPCError` is kept unchanged for non-policy paths (virtual tool errors, escalation-creation failures). Only the policy-Deny path uses the new `writeJSONRPCDeny`.
 - `DenyFeedback` is set on `Escalate` decisions (EscalationEvaluator) as well as `Deny` decisions, but the proxy only reads `Feedback` in `writeJSONRPCDeny` — escalation responses still use `writeJSONRPCEscalated`. The field is available for Task 15.5 if needed.
 - Sequence evaluator restructured: `only_after` missing tools are tracked in a separate slice for `unsatisfied_prerequisites`; priority order for `reason_code` when multiple predicates fire: `only_after > never_after > requires_prior_n`.
@@ -2363,14 +2371,16 @@ Corvera) may not be using Anthropic. One-line fix that expands our stated surfac
 
 **Why:** This is Salus's single strongest differentiator. When Salus blocks an action,
 58% of blocked calls self-correct because the agent receives structured feedback on
-*what it needs to do first*. Our current deny returns a JSON-RPC error with a human-readable
+_what it needs to do first_. Our current deny returns a JSON-RPC error with a human-readable
 reason string. An LLM agent cannot parse that and retry correctly.
 
 ---
 
 ### Task 14.4 — Engine: Fix `never_when` AND/OR logic mismatch
+
 **Status:** Complete
 **Files:**
+
 - `internal/policy/types.go` — added `ContentMatchMode` type + `ContentMatchAny`/`ContentMatchAll` constants; added `NeverWhenMatch ContentMatchMode` field to `ToolPolicy`
 - `internal/engine/content.go` — refactored `Evaluate` to dispatch `evalNeverWhenAny` (OR, default) or `evalNeverWhenAll` (AND); unrecognised `NeverWhenMatch` values return an error (fail closed)
 - `internal/engine/content_test.go` — added `TestContentEvaluator_MatchAll`, `TestContentEvaluator_MatchAll_ErrorFailClosed`, `TestContentEvaluator_InvalidMatchMode`, `BenchmarkContentEvaluator_All`
@@ -2382,6 +2392,7 @@ reason string. An LLM agent cannot parse that and retry correctly.
 - `testdata/policies/content-and-logic.policy.yaml` — new fixture demonstrating `match: all` (AND) and `match: any` (OR) in a single policy
 
 **Notes:**
+
 - The match field is named `never_when_match` on `ToolPolicy` (YAML sibling to `never_when`). This preserves backward compat — existing policies with no `never_when_match` field continue to use OR logic unchanged.
 - `evalNeverWhenAll` short-circuits on the first non-matching predicate. Errors from any predicate still fail closed in both modes.
 - `RuleID` for AND denials is `"content.all_matched"` (no single predicate to point to). The Reason string lists all matched predicates as a semicolon-separated list.
@@ -2391,10 +2402,12 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 14.5 — Docs/README: Fix the prerequisite gap and pitch alignment
+
 **Status:** Complete
 **Files:** `README.md`, `docs/policy-reference.md`, `docs/integrations/openai.md`,
-  `docs/integrations/langchain.md`, `docs/integrations/langraph.md`
+`docs/integrations/langchain.md`, `docs/integrations/langraph.md`
 **Notes:**
+
 - Added 5-step numbered overview at the top of the Quick Start section in README.md.
   `truebearing init` is now listed as step 2 and documented in the detailed walkthrough.
 - Added prerequisite callout blockquote immediately above the Python SDK section. The
@@ -2414,9 +2427,11 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 14.6 — Add `--version` flag to root command
+
 **Status:** Complete
 **Files:** `cmd/main.go`, `.github/workflows/release.yml`
 **Notes:**
+
 - Added package-level `var version = "dev"` in `cmd/main.go`. Default of `"dev"` ensures
   `truebearing --version` always produces a usable string in development/untagged builds.
 - Set `root.Version = version` in `newRootCommand()`. Cobra's built-in version support
@@ -2435,14 +2450,17 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ## PHASE 15 — Competitive Gaps vs Salus (P1: Loses deals)
 
 ### Task 15.1 — Session inspect: Mermaid sequence diagram export
+
 **File:** `cmd/session/inspect.go`
 **Status:** Complete
 **Files:**
+
 - `cmd/session/inspect.go` — added `--format` flag, `writeMermaidOutput`, `detectTaintCausingEvents`, `mermaidDecisionLabel`
 - `cmd/session/inspect_test.go` — new file; 12 `TestWriteMermaidOutput` cases + 3 `TestDetectTaintCausingEvents` cases
 - `internal/store/escalations.go` — added `GetEscalationsBySession(sessionID string) ([]Escalation, error)`
 
 **Notes:**
+
 - `--format` accepts `"table"` (default, existing behaviour) or `"mermaid"`. Unknown values produce a clear error.
 - Mermaid output uses the agent name as the Mermaid participant; spaces are replaced with underscores (Mermaid syntax requirement). Empty agent names fall back to `Agent`.
 - Taint annotation is inferred from the event log: when the first `deny` with `PolicyRule == "taint.session_tainted"` appears, the immediately preceding `allow` event is annotated with `Note over Proxy: session tainted`. This is a heuristic — it is accurate for the common case (taint-applying call immediately precedes the taint-sensitive blocked call) but may mis-annotate if several un-sensitive allowed calls intervened after the taint-applying call.
@@ -2454,8 +2472,10 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 15.2 — Audit: Compliance evidence report generator
+
 **Status:** Complete
 **Files:**
+
 - `cmd/audit/report.go` — new file; `newReportCommand`, `runReport`, `writeReport`,
   `writeEvidenceHeader`, `writePolicySummarySection`, `writePolicyExplainBlock`,
   `writeTimelineSection`, `writeEscalationSection`, `writeAttestationSection`,
@@ -2467,6 +2487,7 @@ reason string. An LLM agent cannot parse that and retry correctly.
   pending escalation status in the timeline.
 
 **Notes:**
+
 - Command: `truebearing audit report --session <id> [--output report.md] [--policy <file>] [--key <file>]`
 - Six Markdown sections: Evidence Header (UUID v4 evidence_id, schema 1.0), Policy Summary,
   Execution Timeline, Escalation Records, Cryptographic Attestation, Regulatory Notes.
@@ -2488,8 +2509,10 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 15.3 — Policy: Vertical-specific policy packs for target companies
+
 **Status:** Complete
 **Files:**
+
 - `policy-packs/insurance-claims/claims-processing.policy.yaml` (new)
 - `policy-packs/insurance-claims/README.md` (new)
 - `policy-packs/legal-ops/privileged-document-guard.policy.yaml` (new)
@@ -2503,7 +2526,7 @@ reason string. An LLM agent cannot parse that and retry correctly.
 (no webhook_url) and L009 (shadow mode advisory) are expected informational warnings.
 
 - **insurance-claims**: `approve_claim` requires `[verify_policy, assess_damage,
-  check_fraud_signals]` + `requires_prior_n: check_fraud_signals count:1` + PII taint
+check_fraud_signals]` + `requires_prior_n: check_fraud_signals count:1` + PII taint
   (`read_claimant_pii` applies, `run_compliance_check` clears) + escalation >$25k.
   Regulatory anchor: NY Ins. Law §2601 / CA Ins. Code §790.03.
 
@@ -2527,6 +2550,7 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 15.4 — README: Competitive positioning section
+
 **Status:** Complete
 **File:** `README.md`
 **Why:** Design partners at regulated companies will google "agent guardrails" before
@@ -2536,16 +2560,16 @@ where you fit relative to Salus, not confused about whether you're the same thin
 **What to build:**
 Add a "How Mercator differs from other guardrail tools" section with a comparison table:
 
-| | Mercator | Salus | LangChain Guardrails |
-|---|---|---|---|
-| Agent code changes required | None (proxy) | Yes (decorators) | Yes (middleware) |
-| Policy lives outside agent | ✓ | ✗ | ✗ |
-| Stateful sequence enforcement | ✓ | ✓ | ✗ |
-| Tamper-evident audit trail | ✓ (Ed25519) | ✗ | ✗ |
-| Works with existing agents | ✓ | ✗ | ✗ |
-| EU AI Act evidence bundles | ✓ | ✗ | ✗ |
-| Self-repair feedback to agent | ✓ (after Task 14.3) | ✓ | ✗ |
-| OpenAI / LangChain support | ✓ (proxy layer) | ✓ | ✓ |
+|                               | Mercator            | Salus            | LangChain Guardrails |
+| ----------------------------- | ------------------- | ---------------- | -------------------- |
+| Agent code changes required   | None (proxy)        | Yes (decorators) | Yes (middleware)     |
+| Policy lives outside agent    | ✓                   | ✗                | ✗                    |
+| Stateful sequence enforcement | ✓                   | ✓                | ✗                    |
+| Tamper-evident audit trail    | ✓ (Ed25519)         | ✗                | ✗                    |
+| Works with existing agents    | ✓                   | ✗                | ✗                    |
+| EU AI Act evidence bundles    | ✓                   | ✗                | ✗                    |
+| Self-repair feedback to agent | ✓ (after Task 14.3) | ✓                | ✗                    |
+| OpenAI / LangChain support    | ✓ (proxy layer)     | ✓                | ✓                    |
 
 Add one paragraph below the table: "If you control your agent code and want decorator-based
 enforcement with self-repair, Salus is excellent. If you need policy enforcement without
@@ -2567,8 +2591,10 @@ rather than "Mercator" (company name) which appears in the task spec.
 ---
 
 ### Task 15.5 — Escalation: HTTP approval endpoint
+
 **Status:** Complete
 **Files:**
+
 - `internal/proxy/admin.go` — new file; `AdminHandler()` method exposing the three admin endpoints with a Go 1.22 method-prefixed mux; `adminEscalation` DTO with snake_case JSON tags (projects from internal `store.Escalation` to avoid coupling the API response format to the internal struct's field names); `writeAdminEscalationError` maps sql.ErrNoRows → 404 and "cannot be resolved" → 409.
 - `internal/proxy/admin_test.go` — 8 tests: list (no filter), list with status filter + invalid filter, approve transitions to approved, reject transitions to rejected, approve not found (404), approve already-resolved (409), approve empty body, end-to-end: approve via admin then `check_escalation_status` returns "approved".
 - `internal/proxy/proxy.go` — added `adminPort int` field; `SetAdminPort(port int)` method; updated `handleMCP` Escalate branch to always construct `NotifyConfig` (with `AdminPort`) rather than only when `sessionPol.Escalation != nil`.
@@ -2576,6 +2602,7 @@ rather than "Mercator" (company name) which appears in the task spec.
 - `cmd/serve.go` — added `adminPort int` flag (default 7774); binds `127.0.0.1:{adminPort}` via `net.Listen` before starting the main server; calls `p.SetAdminPort(adminPort)` and starts `http.Serve(adminLn, p.AdminHandler())` in a goroutine; prints `admin on  127.0.0.1:{adminPort}` in startup banner; `--admin-port 0` disables the admin server.
 
 **Notes:**
+
 - Admin server is localhost-only by design — `net.Listen("tcp", "127.0.0.1:{port}")` rather than `":port"` so it cannot be reached from the network without an explicit port-forward.
 - A failed admin bind is fatal (returns error from `RunE`) — a silent failure would leave escalations unresolvable for the approver.
 - The admin API does not require JWT auth; localhost binding is the access control. This matches the pattern of management endpoints in tools like HAProxy and Prometheus.
@@ -2587,6 +2614,7 @@ rather than "Mercator" (company name) which appears in the task spec.
 ## PHASE 16 — Technical Debt (P2: Will bite in 90 days)
 
 ### Task 16.1 — Consolidate triple AuditRecord struct
+
 **Status:** Complete
 **Files created:** `pkg/audit/doc.go`, `pkg/audit/types.go`
 **Files modified:** `internal/audit/record.go`, `internal/store/audit.go`, `cmd/audit/replay.go`, `cmd/audit/report.go`
@@ -2610,6 +2638,7 @@ modification.
 ---
 
 ### Task 16.2 — Fix polByFingerprint memory growth
+
 **Status:** Complete
 **Files:** `internal/proxy/policy_cache.go` (new), `internal/proxy/proxy.go`,
 `internal/proxy/policy_cache_test.go` (new)
@@ -2627,10 +2656,12 @@ duplicate set.
 ---
 
 ### Task 16.3 — Audit write failure: make gaps detectable
+
 **Status:** Complete
 **Files:** `internal/proxy/proxy.go`, `internal/proxy/health.go`,
-  `internal/proxy/health_test.go`, `cmd/serve.go`
+`internal/proxy/health_test.go`, `cmd/serve.go`
 **Notes:**
+
 - `auditWriteFailures atomic.Int64` field on `Proxy` — incremented inside
   `writeAuditRecord` only when `audit.Write` itself returns an error (not signing
   failures or nil-key early returns, which are configuration issues rather than
@@ -2653,6 +2684,7 @@ duplicate set.
 ---
 
 ### Task 16.4 — Fix rate-limit timestamp accuracy in simulate/replay
+
 **Status:** Complete
 **Files:** `cmd/simulate.go`, `cmd/audit/replay.go`, `cmd/simulate_test.go`, `cmd/audit/audit_test.go`
 **Why:** `RateLimitEvaluator.Evaluate()` uses `call.RequestedAt` to determine rate
@@ -2664,6 +2696,7 @@ demo is the trust-builder, and simulate gives wrong answers for rate-limited pol
 that is a demo risk.
 
 **What to build:**
+
 - When appending events in the simulate/replay in-memory store, set
   `event.RecordedAt = call.RequestedAt.UnixNano()` explicitly, bypassing
   `AppendEvent`'s auto-timestamp for the historical replay path.
@@ -2686,56 +2719,53 @@ in `cmd/audit/audit_test.go`. Both spread and burst cases are covered for both p
 ## PHASE 17 — DX Polish (P3: Matters for design partner retention)
 
 ### Task 17.1 — `truebearing init`: add vertical-aware scaffolding
+
 **File:** `cmd/init.go`
 **Status:** Complete
 **Files:** `cmd/init.go`, `cmd/init_test.go`, `cmd/initpacks/packs.go`,
-  `cmd/initpacks/data/finance-payments.yaml`,
-  `cmd/initpacks/data/healthcare-hipaa.yaml`,
-  `cmd/initpacks/data/legal-privileged-docs.yaml`,
-  `cmd/initpacks/data/life-sciences-regulatory.yaml`,
-  `cmd/initpacks/data/devops-infra.yaml`
+`cmd/initpacks/data/finance-payments.yaml`,
+`cmd/initpacks/data/healthcare-hipaa.yaml`,
+`cmd/initpacks/data/legal-privileged-docs.yaml`,
+`cmd/initpacks/data/life-sciences-regulatory.yaml`,
+`cmd/initpacks/data/devops-infra.yaml`
 **Notes:** Added Question 0 "What best describes your agent?" before the five-question
-  blank-template flow. Selecting a known vertical (finance, healthcare, legal,
-  life-sciences, devops) copies the embedded policy pack directly to the output path
-  and exits without further interactive questions. Selecting "other" (or pressing
-  Enter for the default) continues to the existing five-question flow unchanged.
-  A `--vertical <id>` flag skips the interactive question for CI and testing.
-  Policy packs are embedded at build time via `//go:embed` in the new `cmd/initpacks`
-  package; the data/ files are copies of the canonical templates in `policy-packs/`.
-  Changes to source packs must be propagated to `cmd/initpacks/data/` manually.
-  `TestInit_Vertical_LintClean` asserts zero lint ERRORs for every embedded vertical.
-  All existing tests updated to pass `vertical="other"` to skip the new Q0.
-  `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all pass clean.
+blank-template flow. Selecting a known vertical (finance, healthcare, legal,
+life-sciences, devops) copies the embedded policy pack directly to the output path
+and exits without further interactive questions. Selecting "other" (or pressing
+Enter for the default) continues to the existing five-question flow unchanged.
+A `--vertical <id>` flag skips the interactive question for CI and testing.
+Policy packs are embedded at build time via `//go:embed` in the new `cmd/initpacks`
+package; the data/ files are copies of the canonical templates in `policy-packs/`.
+Changes to source packs must be propagated to `cmd/initpacks/data/` manually.
+`TestInit_Vertical_LintClean` asserts zero lint ERRORs for every embedded vertical.
+All existing tests updated to pass `vertical="other"` to skip the new Q0.
+`go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all pass clean.
 
 ---
 
-### Task 17.2 — `truebearing policy lint`: add shadow mode check
-**File:** `cmd/policy/lint.go`
-**Why:** A developer who runs `truebearing serve` with `enforcement_mode: block` on
-day one of integration will likely break their agent. Shadow mode should be the
-recommended starting point. The linter should nudge this.
-
-**What to build:**
-- Add lint rule `L019`: if any tool in the policy has `enforcement_mode: block` and
-  the policy has not been previously deployed (no audit records exist for this
-  fingerprint), emit a WARNING: "Consider starting with `enforcement_mode: shadow`
-  to observe enforcement before blocking. Use `truebearing audit query` to review
-  what would have been blocked."
-- **Note:** Rules L014 and L015 are already taken by Task 9.1 (content predicates:
-  unknown operator, invalid regex). This rule is L019 to avoid collision.
-- Severity: WARN (not ERROR — blocking mode is valid and intentional for some teams).
-- This requires the linter to optionally accept a `--db` flag pointing at the SQLite
-  store. If no `--db` is provided, skip L019 silently (the linter must still be
-  usable without a running proxy).
+- [x] **Task 17.2** — `truebearing policy lint`: add shadow mode check
+      **Status:** Complete
+      **Files:**
+  - `internal/store/audit.go` — added `HasAuditRecordsForFingerprint`
+  - `internal/store/audit_test.go` — added `TestHasAuditRecordsForFingerprint`
+  - `internal/policy/lint.go` — added `LintL020` (exported, separate from main `Lint` function)
+  - `internal/policy/lint_test.go` — added `TestLintL020`
+  - `cmd/policy/lint.go` — wired `--db` flag to run `LintL020` when database is available
+    **Notes:**
+  - Implemented as rule **L020** because L019 was already claimed by Task 14.4 (`never_when` ambiguity).
+  - `LintL020` is exported separately from `Lint` because it requires external state (audit history) that the pure `Lint` function does not have access to.
+  - The check is skipped silently if `--db` is not provided, preserving the offline utility of the linter.
 
 ---
 
 ### Task 17.3 — Node.js SDK: raise loud error for unsupported clients
+
 **File:** `sdks/node/src/proxy.ts` (or equivalent)
 **Why:** Same silent failure risk as the Python SDK (Task 14.1), but for Node.js.
 Applies to any Node agent using non-Anthropic clients.
 
 **What to build:**
+
 - Mirror Task 14.1 exactly in the Node SDK.
 - If the passed client is not an Anthropic SDK instance, throw a `TypeError` with the
   manual `baseURL` configuration snippet.
@@ -2747,6 +2777,7 @@ Applies to any Node agent using non-Anthropic clients.
 ---
 
 ## Manual Distribution Tasks
+
 > Not for the coding agent. Do these yourself after the above tasks are merged.
 > Ordered by dependency — each step may unblock the next.
 

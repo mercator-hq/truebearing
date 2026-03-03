@@ -450,6 +450,49 @@ func lintL019(p *Policy) []LintResult {
 	return results
 }
 
+// LintL020 warns when a block-mode policy has no deployment history. The
+// hasDeploymentHistory parameter must be supplied by the caller (typically the
+// CLI after querying the store via HasAuditRecordsForFingerprint). When true,
+// L020 is suppressed — the operator has already run this policy under real
+// traffic and has consciously chosen block mode.
+//
+// This function is intentionally separate from Lint because it requires
+// information from outside the policy itself (the audit log). Call it alongside
+// Lint when a --db path is available. When --db is not provided, omit this
+// call entirely — L020 must be silently skipped, not fired as a false positive.
+func LintL020(p *Policy, hasDeploymentHistory bool) []LintResult {
+	return lintL020(p, hasDeploymentHistory)
+}
+
+// lintL020 warns when a block-mode policy has no deployment history in the
+// audit log. The check covers both the global enforcement_mode and per-tool
+// overrides: if any enforcement level is block and the policy fingerprint has
+// never appeared in the audit log, the operator may not realise how many calls
+// will be denied on day one.
+func lintL020(p *Policy, hasDeploymentHistory bool) []LintResult {
+	if hasDeploymentHistory {
+		return nil
+	}
+	// Check whether the global policy or any per-tool policy uses block mode.
+	usesBlock := p.EnforcementMode == EnforcementBlock
+	if !usesBlock {
+		for _, tp := range p.Tools {
+			if tp.EnforcementMode == EnforcementBlock {
+				usesBlock = true
+				break
+			}
+		}
+	}
+	if !usesBlock {
+		return nil
+	}
+	return []LintResult{{
+		Code:     "L020",
+		Severity: SeverityWarning,
+		Message:  "enforcement_mode is block but this policy fingerprint has no audit history; consider starting with enforcement_mode: shadow to observe enforcement before blocking — use `truebearing audit query` to review what would have been blocked",
+	}}
+}
+
 // lintL013 detects circular only_after dependencies that create permanent
 // deadlocks. If tool A has only_after: [B] and tool B has only_after: [A],
 // neither can ever be called first, so neither can ever be called at all.

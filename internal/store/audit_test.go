@@ -324,6 +324,68 @@ func TestQueryAuditLog_EmptyNullableFieldsAreEmptyStrings(t *testing.T) {
 	}
 }
 
+func TestHasAuditRecordsForFingerprint(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T, st *store.Store)
+		fingerprint string
+		want        bool
+	}{
+		{
+			name: "returns true when a record with the fingerprint exists",
+			setup: func(t *testing.T, st *store.Store) {
+				r := baseRecord("rec-fp1", "sess-1", "tool-x", "allow", epoch.UnixNano())
+				r.PolicyFingerprint = "fp-target"
+				appendRecord(t, st, r)
+			},
+			fingerprint: "fp-target",
+			want:        true,
+		},
+		{
+			name: "returns false when no record with the fingerprint exists",
+			setup: func(t *testing.T, st *store.Store) {
+				r := baseRecord("rec-fp2", "sess-1", "tool-x", "allow", epoch.UnixNano())
+				r.PolicyFingerprint = "fp-other"
+				appendRecord(t, st, r)
+			},
+			fingerprint: "fp-target",
+			want:        false,
+		},
+		{
+			name:        "returns false on empty audit log",
+			setup:       func(_ *testing.T, _ *store.Store) {},
+			fingerprint: "fp-target",
+			want:        false,
+		},
+		{
+			name: "returns true when multiple records exist for the fingerprint",
+			setup: func(t *testing.T, st *store.Store) {
+				r1 := baseRecord("rec-fp3", "sess-a", "tool-x", "allow", epoch.UnixNano())
+				r1.PolicyFingerprint = "fp-target"
+				r2 := baseRecord("rec-fp4", "sess-b", "tool-y", "deny", epoch.Add(time.Second).UnixNano())
+				r2.PolicyFingerprint = "fp-target"
+				appendRecord(t, st, r1)
+				appendRecord(t, st, r2)
+			},
+			fingerprint: "fp-target",
+			want:        true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.NewTestDB(t)
+			tc.setup(t, st)
+			got, err := st.HasAuditRecordsForFingerprint(tc.fingerprint)
+			if err != nil {
+				t.Fatalf("HasAuditRecordsForFingerprint: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("HasAuditRecordsForFingerprint(%q) = %v, want %v", tc.fingerprint, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestQueryAuditLog_OrderByRecordedAtASC(t *testing.T) {
 	st := store.NewTestDB(t)
 
