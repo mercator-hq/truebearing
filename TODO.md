@@ -2301,6 +2301,23 @@
 ---
 
 ### Task 14.2 — SDK: Add native OpenAI client support
+**Status:** Complete
+**Files:** `sdks/python/src/truebearing/_proxy.py`, `sdks/python/pyproject.toml`, `sdks/python/tests/test_proxy.py`
+**Notes:** Added `openai.OpenAI` and `openai.AsyncOpenAI` branches to `_configure_client`
+  using the same `try/except ImportError` guard as the existing Anthropic block. Used
+  `try/except ImportError` rather than `importlib.util.find_spec` (spec'd in the task):
+  `find_spec` raises `ValueError` when the module in `sys.modules` is a `MagicMock`
+  (because `MagicMock().__spec__` is `None`), making it incompatible with the test patching
+  approach. `try/except` is idiomatic Python and consistent with the Anthropic block.
+  OpenAI clients are reconfigured via constructor (`openai.OpenAI(base_url=..., api_key=...,
+  default_headers=...)`) — openai>=1.0 does not expose `with_options`. Only `base_url`,
+  `api_key`, and `default_headers` are forwarded; other settings (timeout, max_retries)
+  fall back to SDK defaults (noted in a Design comment in code).
+  7 new tests added: sync configured, sync api_key forwarded, async configured, async api_key
+  forwarded, sync does not raise, async does not raise, session_id header matches. 32/32 pass.
+  Live end-to-end test with a real OpenAI client was not run — mark for verification at first
+  design partner demo. The OpenAI SDK `base_url` override is standard; no known incompatibility.
+
 **File:** `sdks/python/src/truebearing/_proxy.py`
 **Why:** Salus supports OpenAI out of the box. Several target design partners (End Close,
 Corvera) may not be using Anthropic. One-line fix that expands our stated surface.

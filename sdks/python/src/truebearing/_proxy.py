@@ -251,10 +251,13 @@ def _configure_client(
     Supported client types:
       - ``anthropic.Anthropic`` (sync)
       - ``anthropic.AsyncAnthropic`` (async)
+      - ``openai.OpenAI`` (sync)
+      - ``openai.AsyncOpenAI`` (async)
 
-    Passing any other type raises ``ValueError`` with actionable instructions
-    pointing the caller to the manual ``base_url`` workaround and the
-    integrations documentation.
+    Both Anthropic and OpenAI SDKs are optional runtime dependencies detected
+    via import guards. Passing any other type raises ``ValueError`` with
+    actionable instructions pointing the caller to the manual ``base_url``
+    workaround and the integrations documentation.
 
     Design: silent pass-through for unrecognised SDKs was deliberately removed.
     An unrecognised client returned unchanged would route tool calls directly to
@@ -286,9 +289,33 @@ def _configure_client(
     except ImportError:
         pass
 
+    # OpenAI SDK (openai>=1.0): construct a new client instance with the proxy
+    # URL and required headers. openai.OpenAI does not expose with_options, so
+    # we must construct a new instance. Only base_url, api_key, and
+    # default_headers are forwarded; other settings (timeout, max_retries) fall
+    # back to SDK defaults.
+    try:
+        import openai  # type: ignore[import]
+
+        if isinstance(client, openai.OpenAI):
+            return openai.OpenAI(
+                base_url=proxy_url,
+                api_key=client.api_key,
+                default_headers=extra_headers,
+            )
+        if isinstance(client, openai.AsyncOpenAI):
+            return openai.AsyncOpenAI(
+                base_url=proxy_url,
+                api_key=client.api_key,
+                default_headers=extra_headers,
+            )
+    except ImportError:
+        pass
+
     raise ValueError(
         f"Unsupported client type: {type(client).__name__!r}. "
-        "TrueBearing currently supports anthropic.Anthropic and anthropic.AsyncAnthropic. "
+        "TrueBearing currently supports anthropic.Anthropic, anthropic.AsyncAnthropic, "
+        "openai.OpenAI, and openai.AsyncOpenAI. "
         "To use a different SDK, configure the proxy URL on your client manually: "
         f"client = YourClient(base_url='{proxy_url}'). "
         "See https://docs.mercator.dev/integrations for the full list of supported clients."

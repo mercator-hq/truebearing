@@ -421,3 +421,154 @@ def test_anthropic_client_does_not_raise():
             agent_jwt="jwt",
         )
     assert proxy._client is not None
+
+
+# ---------------------------------------------------------------------------
+# OpenAI client support (Task 14.2)
+# ---------------------------------------------------------------------------
+
+
+class _FakeOpenAI:
+    """Minimal openai.OpenAI substitute that records constructor arguments."""
+
+    def __init__(self, base_url=None, api_key=None, default_headers=None):
+        self.base_url = base_url
+        self.api_key = api_key or "fake-api-key"
+        self.default_headers = default_headers or {}
+        self._configured = {
+            "base_url": base_url,
+            "api_key": api_key,
+            "default_headers": default_headers or {},
+        }
+
+
+class _FakeAsyncOpenAI:
+    """Minimal openai.AsyncOpenAI substitute that records constructor arguments."""
+
+    def __init__(self, base_url=None, api_key=None, default_headers=None):
+        self.base_url = base_url
+        self.api_key = api_key or "fake-api-key"
+        self.default_headers = default_headers or {}
+        self._configured = {
+            "base_url": base_url,
+            "api_key": api_key,
+            "default_headers": default_headers or {},
+        }
+
+
+def _fake_openai_module():
+    """Return a mock of the openai module with fake client classes."""
+    mod = MagicMock()
+    mod.OpenAI = _FakeOpenAI
+    mod.AsyncOpenAI = _FakeAsyncOpenAI
+    return mod
+
+
+def test_openai_sync_client_configured():
+    """PolicyProxy reconfigures the OpenAI sync client with proxy URL and headers."""
+    client = _FakeOpenAI(api_key="test-openai-key")
+    with patch.dict(
+        "sys.modules",
+        {"anthropic": _fake_anthropic_module(), "openai": _fake_openai_module()},
+    ):
+        proxy = PolicyProxy(
+            client,
+            proxy_url="http://localhost:7773",
+            agent_jwt="test-jwt",
+            session_id="fixed-session-id",
+        )
+    assert proxy._client._configured["base_url"] == "http://localhost:7773"
+    headers = proxy._client._configured["default_headers"]
+    assert headers["Authorization"] == "Bearer test-jwt"
+    assert headers["X-TrueBearing-Session-ID"] == "fixed-session-id"
+
+
+def test_openai_sync_client_api_key_forwarded():
+    """Original api_key is forwarded to the new OpenAI client instance."""
+    client = _FakeOpenAI(api_key="my-openai-key")
+    with patch.dict(
+        "sys.modules",
+        {"anthropic": _fake_anthropic_module(), "openai": _fake_openai_module()},
+    ):
+        proxy = PolicyProxy(
+            client,
+            proxy_url="http://localhost:7773",
+        )
+    assert proxy._client._configured["api_key"] == "my-openai-key"
+
+
+def test_openai_async_client_configured():
+    """PolicyProxy reconfigures the AsyncOpenAI client with proxy URL and headers."""
+    client = _FakeAsyncOpenAI(api_key="async-openai-key")
+    with patch.dict(
+        "sys.modules",
+        {"anthropic": _fake_anthropic_module(), "openai": _fake_openai_module()},
+    ):
+        proxy = PolicyProxy(
+            client,
+            proxy_url="http://localhost:7773",
+            agent_jwt="test-jwt",
+            session_id="fixed-session-id",
+        )
+    assert proxy._client._configured["base_url"] == "http://localhost:7773"
+    headers = proxy._client._configured["default_headers"]
+    assert headers["Authorization"] == "Bearer test-jwt"
+    assert headers["X-TrueBearing-Session-ID"] == "fixed-session-id"
+
+
+def test_openai_async_client_api_key_forwarded():
+    """Original api_key is forwarded to the new AsyncOpenAI client instance."""
+    client = _FakeAsyncOpenAI(api_key="my-async-key")
+    with patch.dict(
+        "sys.modules",
+        {"anthropic": _fake_anthropic_module(), "openai": _fake_openai_module()},
+    ):
+        proxy = PolicyProxy(
+            client,
+            proxy_url="http://localhost:7773",
+        )
+    assert proxy._client._configured["api_key"] == "my-async-key"
+
+
+def test_openai_sync_client_does_not_raise():
+    """A recognised openai.OpenAI instance is accepted without ValueError."""
+    with patch.dict(
+        "sys.modules",
+        {"anthropic": _fake_anthropic_module(), "openai": _fake_openai_module()},
+    ):
+        proxy = PolicyProxy(
+            _FakeOpenAI(),
+            proxy_url="http://localhost:7773",
+            agent_jwt="jwt",
+        )
+    assert proxy._client is not None
+
+
+def test_openai_async_client_does_not_raise():
+    """A recognised openai.AsyncOpenAI instance is accepted without ValueError."""
+    with patch.dict(
+        "sys.modules",
+        {"anthropic": _fake_anthropic_module(), "openai": _fake_openai_module()},
+    ):
+        proxy = PolicyProxy(
+            _FakeAsyncOpenAI(),
+            proxy_url="http://localhost:7773",
+            agent_jwt="jwt",
+        )
+    assert proxy._client is not None
+
+
+def test_openai_session_id_header_matches_proxy_session_id():
+    """X-TrueBearing-Session-ID header must equal proxy._session_id for OpenAI clients."""
+    client = _FakeOpenAI(api_key="key")
+    with patch.dict(
+        "sys.modules",
+        {"anthropic": _fake_anthropic_module(), "openai": _fake_openai_module()},
+    ):
+        proxy = PolicyProxy(
+            client,
+            proxy_url="http://localhost:7773",
+            agent_jwt="jwt",
+        )
+    headers = proxy._client._configured["default_headers"]
+    assert headers["X-TrueBearing-Session-ID"] == proxy._session_id
