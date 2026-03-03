@@ -2527,6 +2527,7 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 15.4 — README: Competitive positioning section
+**Status:** Complete
 **File:** `README.md`
 **Why:** Design partners at regulated companies will google "agent guardrails" before
 your first call and find Salus. You want them to arrive at your README already knowing
@@ -2555,6 +2556,13 @@ industry where compliance teams define policy — that's what Mercator is built 
 The "self-repair feedback to agent" cell is aspirational until that task ships —
 a design partner who reads it and inspects a deny response will not find
 `error.data.reason_code` in the payload.
+
+**Notes:** Added "How TrueBearing Differs from Other Guardrail Tools" section between "What It
+Does" and "Install" — positioned early so design partners evaluating alternatives see
+differentiation before diving into the quick-start. Task 14.3 was confirmed complete before
+writing, so the "Self-repair feedback to agent" row carries ✓ without the "(after Task 14.3)"
+qualifier. Column header uses "TrueBearing" (product name) consistent with the rest of the README,
+rather than "Mercator" (company name) which appears in the task spec.
 
 ---
 

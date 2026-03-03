@@ -27,6 +27,26 @@ replayable, tamper-evident, and queryable by session, tool, decision, or distrib
 
 ---
 
+## How TrueBearing Differs from Other Guardrail Tools
+
+| | TrueBearing | Salus | LangChain Guardrails |
+|---|---|---|---|
+| Agent code changes required | None (proxy) | Yes (decorators) | Yes (middleware) |
+| Policy lives outside agent | ✓ | ✗ | ✗ |
+| Stateful sequence enforcement | ✓ | ✓ | ✗ |
+| Tamper-evident audit trail | ✓ (Ed25519) | ✗ | ✗ |
+| Works with existing agents | ✓ | ✗ | ✗ |
+| EU AI Act evidence bundles | ✓ | ✗ | ✗ |
+| Self-repair feedback to agent | ✓ | ✓ | ✗ |
+| OpenAI / LangChain support | ✓ (proxy layer) | ✓ | ✓ |
+
+If you control your agent code and want decorator-based enforcement with self-repair, Salus is
+excellent. If you need policy enforcement without touching agent code, a tamper-evident audit trail
+for regulators, or you're in a regulated industry where compliance teams define policy — that's
+what TrueBearing is built for.
+
+---
+
 ## Install
 
 ### Homebrew (macOS / Linux)
