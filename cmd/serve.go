@@ -32,6 +32,7 @@ func newServeCommand() *cobra.Command {
 		stdio        bool
 		otelEndpoint string
 		logLevel     string
+		auditStrict  bool
 	)
 
 	cmd := &cobra.Command{
@@ -85,6 +86,7 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 			}
 
 			p := proxy.New(upstreamURL, st, pol, dbPath, signingKey)
+			p.SetAuditStrict(auditStrict)
 
 			// Initialise structured JSON logging. The handler writes to stderr so
 			// that log output is separate from the human-readable startup banner on
@@ -221,6 +223,7 @@ policy, and forwards allowed calls to the upstream MCP server.`,
 	cmd.Flags().BoolVar(&stdio, "stdio", false, "accept MCP requests on stdin/stdout instead of HTTP")
 	cmd.Flags().StringVar(&otelEndpoint, "otel-endpoint", "", "OTLP HTTP endpoint for trace emission (e.g. http://localhost:4318); overrides OTEL_EXPORTER_OTLP_ENDPOINT")
 	cmd.Flags().StringVar(&logLevel, "log-level", "info", "log verbosity: debug, info, warn, error")
+	cmd.Flags().BoolVar(&auditStrict, "audit-strict", false, "deny tool calls when audit records cannot be written (recommended for production)")
 
 	return cmd
 }

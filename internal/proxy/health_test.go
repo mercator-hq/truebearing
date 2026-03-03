@@ -139,6 +139,73 @@ func TestHealth_Degraded_DBUnreachable(t *testing.T) {
 	}
 }
 
+// TestHealth_AuditDegraded verifies that GET /health returns 200 with
+// "audit_degraded": true when at least one audit.Write failure has been
+// recorded. The proxy must remain 200 (not 503) — it is still serving requests
+// — but the field signals to operators that the audit log may have gaps.
+func TestHealth_AuditDegraded(t *testing.T) {
+	pol := parseHealthPolicy(t, "")
+	st := store.NewTestDB(t)
+
+	upstream, err := url.Parse("http://localhost:9999")
+	if err != nil {
+		t.Fatalf("parsing upstream URL: %v", err)
+	}
+	p := New(upstream, st, pol, "test.db", nil)
+
+	// Simulate a write failure by incrementing the counter directly.
+	// This is the same state that writeAuditRecord produces when audit.Write
+	// returns a non-nil error, without requiring a real SQLite write failure.
+	p.auditWriteFailures.Add(1)
+
+	srv := httptest.NewServer(p.Handler())
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/health")
+	if err != nil {
+		t.Fatalf("GET /health: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// HTTP 200: the proxy is still serving; degraded audit is advisory only.
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status: want 200 (audit degraded is advisory), got %d", resp.StatusCode)
+	}
+
+	var body healthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding health response: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Errorf("status: want ok, got %q", body.Status)
+	}
+	if !body.AuditDegraded {
+		t.Error("audit_degraded: want true when audit write failures > 0, got false")
+	}
+}
+
+// TestHealth_AuditDegraded_ZeroFailures verifies that "audit_degraded" is absent
+// (omitempty) from the health response when no write failures have occurred.
+func TestHealth_AuditDegraded_ZeroFailures(t *testing.T) {
+	pol := parseHealthPolicy(t, "")
+	st := store.NewTestDB(t)
+	srv := newHealthServer(t, st, pol, "test.db")
+
+	resp, err := http.Get(srv.URL + "/health")
+	if err != nil {
+		t.Fatalf("GET /health: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var body healthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding health response: %v", err)
+	}
+	if body.AuditDegraded {
+		t.Error("audit_degraded: want false (field omitted) when no write failures have occurred")
+	}
+}
+
 // TestHealth_Degraded_PolicyFileUnreadable verifies that GET /health returns 503
 // when the policy SourcePath points to a file that no longer exists on disk.
 func TestHealth_Degraded_PolicyFileUnreadable(t *testing.T) {

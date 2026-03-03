@@ -2627,21 +2627,28 @@ duplicate set.
 ---
 
 ### Task 16.3 — Audit write failure: make gaps detectable
-**File:** `internal/proxy/proxy.go` (audit.Write error handling)
-**Why:** Current behavior: if `audit.Write` fails, the proxy logs the failure and
-allows the tool call to proceed. An attacker who can induce consistent write failures
-gets an ungoverned window with no signal to the operator.
-
-**What to build:**
-- Add a counter metric (or structured log field) that increments on every `audit.Write`
-  failure: `audit_write_failures_total`.
-- Expose this on the `/health` endpoint: if `audit_write_failures_total > 0`, include
-  `"audit_degraded": true` in the health JSON response (but keep HTTP 200 — the proxy
-  is still serving).
-- Add a `--audit-strict` flag to `serve`. When set, a failed `audit.Write` causes the
-  proxy to return a deny for that tool call rather than allowing it through. Default off
-  (preserving current behavior) but document it as the recommended production setting.
-- Add a test: simulate a write failure, verify `audit_degraded: true` appears in health.
+**Status:** Complete
+**Files:** `internal/proxy/proxy.go`, `internal/proxy/health.go`,
+  `internal/proxy/health_test.go`, `cmd/serve.go`
+**Notes:**
+- `auditWriteFailures atomic.Int64` field on `Proxy` — incremented inside
+  `writeAuditRecord` only when `audit.Write` itself returns an error (not signing
+  failures or nil-key early returns, which are configuration issues rather than
+  DB write failures).
+- `audit_write_failures_total` is emitted as a structured log field alongside
+  each error log entry so operators can grep/aggregate it from JSON logs without
+  a separate metrics system.
+- `/health` now includes `"audit_degraded": true` (via `omitempty` — absent when
+  false) when the counter is non-zero. HTTP status remains 200; degraded audit is
+  advisory, not a hard service failure.
+- `--audit-strict` flag on `truebearing serve` (default off). When set,
+  `writeAuditRecord` returning true causes the Allow/ShadowDeny switch branch to
+  return a JSON-RPC deny with rule ID `audit_write_failure` instead of forwarding
+  upstream. The session event retains the pipeline's "allow" decision — this
+  intentional inconsistency is documented in a Design: comment in handleMCP.
+- Two new tests in `health_test.go`: `TestHealth_AuditDegraded` (counter > 0 →
+  audit_degraded: true, HTTP 200) and `TestHealth_AuditDegraded_ZeroFailures`
+  (no failures → field absent from JSON).
 
 ---
 

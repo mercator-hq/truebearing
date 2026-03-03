@@ -18,6 +18,13 @@ type healthResponse struct {
 	ProxyVersion      string `json:"proxy_version,omitempty"`
 	DBPath            string `json:"db_path,omitempty"`
 	Reason            string `json:"reason,omitempty"`
+	// AuditDegraded is true when at least one audit.Write call has failed since
+	// the proxy started. It does not affect the HTTP status (remains 200) because
+	// the proxy is still serving requests; it is a signal to operators and
+	// monitoring systems that the audit log may have gaps. The proxy's
+	// audit_write_failures_total counter is the source of truth; this field is
+	// its health-endpoint projection.
+	AuditDegraded bool `json:"audit_degraded,omitempty"`
 }
 
 // handleHealth handles GET /health. This endpoint is registered on the mux
@@ -55,6 +62,7 @@ func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 		PolicyFile:        pol.SourcePath,
 		ProxyVersion:      proxyVersion,
 		DBPath:            p.dbPath,
+		AuditDegraded:     p.auditWriteFailures.Load() > 0,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -16,6 +16,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,6 +73,21 @@ type Proxy struct {
 	polMu    sync.RWMutex
 	livePol  *policy.Policy
 	polCache *policyLRU
+
+	// auditWriteFailures counts the number of times audit.Write has returned a
+	// non-nil error since the proxy started. A non-zero value indicates that the
+	// audit log may have gaps and is surfaced as "audit_degraded: true" on the
+	// /health endpoint so operators and monitoring systems can detect the condition
+	// without tailing logs. Accessed atomically; no mutex required.
+	auditWriteFailures atomic.Int64
+
+	// auditStrict controls fail-closed behaviour on audit write failures. When
+	// true, a tool call whose audit record could not be written to the database
+	// is denied rather than allowed through. Default false preserves the prior
+	// behaviour (log and continue), but operators running TrueBearing in
+	// production should enable this flag to eliminate the ungoverned window that
+	// an attacker who can induce persistent write failures would otherwise obtain.
+	auditStrict bool
 }
 
 // New creates a Proxy that forwards traffic to upstream, uses st for agent
@@ -251,6 +267,16 @@ func (p *Proxy) SetLogger(l *slog.Logger) {
 // recipients can act without CLI access to the proxy machine.
 func (p *Proxy) SetAdminPort(port int) {
 	p.adminPort = port
+}
+
+// SetAuditStrict enables fail-closed behaviour for audit write failures. When
+// strict is true, any tool call whose audit record cannot be written to the
+// database is denied rather than forwarded to the upstream. This prevents an
+// attacker who can induce persistent write failures from obtaining an ungoverned
+// window. The flag defaults to false so existing deployments are not disrupted;
+// operators should enable it in production.
+func (p *Proxy) SetAuditStrict(strict bool) {
+	p.auditStrict = strict
 }
 
 // emitDecisionSpan records a single OTel span for one policy decision. The
@@ -484,7 +510,9 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// event.Seq is available and the record is persisted regardless of which
 	// decision branch runs below. Per pipeline invariant 1 (CLAUDE.md §6):
 	// exactly one AuditRecord is written per tool call, regardless of outcome.
-	p.writeAuditRecord(r, sessionID, claims.AgentName, claims.ParentAgent, params.Name, params.Arguments, event.Seq, decision, sessionPol.Fingerprint)
+	// auditFailed is true only when audit.Write itself fails (not signing errors
+	// or a nil key). It is used below to implement --audit-strict fail-closed.
+	auditFailed := p.writeAuditRecord(r, sessionID, claims.AgentName, claims.ParentAgent, params.Name, params.Arguments, event.Seq, decision, sessionPol.Fingerprint)
 
 	// Emit an OTel span for this decision. The span attributes mirror the
 	// AuditRecord fields so the two can be correlated without a join.
@@ -536,9 +564,25 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 
 	switch decision.Action {
 	case engine.Allow, engine.ShadowDeny:
-		// Both Allow and ShadowDeny forward the call to the upstream. ShadowDeny
+		// Both Allow and ShadowDeny normally forward the call to the upstream. ShadowDeny
 		// records a policy violation in the audit log but permits the call through
 		// because the effective enforcement mode for this tool is shadow.
+		//
+		// Design: when --audit-strict is set and the audit record could not be
+		// written to the database, we deny the call here rather than forwarding
+		// it. This closes the ungoverned window that a persistent write failure
+		// would otherwise create. The session event (AppendEvent) already recorded
+		// the pipeline's "allow" decision, which is intentionally inconsistent with
+		// the actual deny response — the audit-strict override takes precedence over
+		// the pipeline decision at the enforcement boundary.
+		if auditFailed && p.auditStrict {
+			p.logger.WarnContext(r.Context(), "denying tool call in audit-strict mode: audit write failed",
+				"session_id", sessionID,
+				"tool", params.Name,
+			)
+			writeJSONRPCError(w, mcpReq.ID, "audit record could not be written; request denied by audit-strict mode", "audit_write_failure")
+			return
+		}
 		if counterErr := p.st.IncrementSessionCounters(sessionID, costPerToolCall); counterErr != nil {
 			// Counter failures are advisory: the call has already been evaluated
 			// and the session event written. Log and proceed so a bookkeeping
@@ -594,10 +638,16 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 // and persists it via audit.Write. It is called once per tool call, immediately
 // after AppendEvent, so event.Seq is available.
 //
+// Returns true if audit.Write itself failed (the DB write step). Signing
+// failures and a nil signing key return false — those are configuration issues,
+// not write failures. The caller uses the return value to implement --audit-strict
+// fail-closed behaviour.
+//
 // If no signing key is loaded (p.signingKey == nil), the method logs a warning
 // and returns without writing. This allows the proxy to operate without keys
 // during local development, as described in mvp-plan.md §15. Per CLAUDE.md §8,
-// the proxy never blocks a request because of an audit failure.
+// the proxy never blocks a request because of an audit failure by default; set
+// auditStrict to true to change this behaviour.
 func (p *Proxy) writeAuditRecord(
 	r *http.Request,
 	sessionID, agentName, parentAgent, toolName string,
@@ -605,13 +655,13 @@ func (p *Proxy) writeAuditRecord(
 	seq uint64,
 	decision engine.Decision,
 	policyFingerprint string,
-) {
+) bool {
 	if p.signingKey == nil {
 		p.logger.WarnContext(r.Context(), "audit record not persisted: no signing key loaded",
 			"session_id", sessionID,
 			"seq", seq,
 		)
-		return
+		return false
 	}
 
 	// sha256 of raw arguments JSON per CLAUDE.md §8 security invariant 4.
@@ -644,15 +694,22 @@ func (p *Proxy) writeAuditRecord(
 			"seq", seq,
 			"error", signErr,
 		)
-		return
+		return false
 	}
 	if writeErr := audit.Write(rec, p.st); writeErr != nil {
+		// Increment the persistent failure counter so the /health endpoint can
+		// surface the degraded audit state to operators and monitoring systems
+		// without requiring log tailing.
+		p.auditWriteFailures.Add(1)
 		p.logger.ErrorContext(r.Context(), "writing audit record failed",
 			"session_id", sessionID,
 			"seq", seq,
 			"error", writeErr,
+			"audit_write_failures_total", p.auditWriteFailures.Load(),
 		)
+		return true
 	}
+	return false
 }
 
 // writeJSONRPCError writes a JSON-RPC 2.0 error response for a policy denial.
