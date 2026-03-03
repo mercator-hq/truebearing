@@ -2,11 +2,14 @@ package audit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mercator-hq/truebearing/internal/engine"
+	inpolicy "github.com/mercator-hq/truebearing/internal/policy"
 	"github.com/mercator-hq/truebearing/internal/store"
 )
 
@@ -489,5 +492,124 @@ func TestWriteExport_ValidJSONL_NoTrailingComma(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &obj); err != nil {
 			t.Errorf("line %d is not valid JSON: %v\nline: %q", i+1, err, line)
 		}
+	}
+}
+
+// --- rate-limit timestamp accuracy in replay ---
+
+// makeRateLimitPolicy returns a parsed policy that limits search_web to 5 calls
+// per 60-second window. Using ParseBytes ensures a valid fingerprint is set, which
+// is required by st.CreateSession inside replaySession.
+func makeRateLimitPolicy(t *testing.T) *inpolicy.Policy {
+	t.Helper()
+	pol, err := inpolicy.ParseBytes([]byte(`
+version: "1.0"
+agent: search-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 5
+      window_seconds: 60
+`), "")
+	if err != nil {
+		t.Fatalf("makeRateLimitPolicy: ParseBytes: %v", err)
+	}
+	return pol
+}
+
+// makeAuditRecord builds a minimal auditLogLine (pkgaudit.AuditRecord) for
+// replay tests. RecordedAt is in unix nanoseconds.
+func makeAuditRecord(sessionID string, seq uint64, toolName, decision string, recordedAt int64) auditLogLine {
+	return auditLogLine{
+		ID:        "rec-" + sessionID + "-" + toolName,
+		SessionID: sessionID,
+		Seq:       seq,
+		AgentName: "search-agent",
+		ToolName:  toolName,
+		Decision:  decision,
+		// ArgumentsSHA256 is not used by the replay pipeline evaluators.
+		ArgumentsSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		RecordedAt:      recordedAt,
+	}
+}
+
+// TestReplaySession_RateLimitSpreadAllowed verifies that six audit records for a
+// rate-limited tool, spread two minutes apart over ten minutes, are all replayed
+// as "allow". The fix under test is that AppendEvent receives the original audit
+// log RecordedAt (not time.Now()), so CountSessionEventsSince correctly finds
+// zero calls inside the 60-second window for each successive replayed call.
+func TestReplaySession_RateLimitSpreadAllowed(t *testing.T) {
+	pol := makeRateLimitPolicy(t)
+	st := store.NewTestDB(t)
+	pipeline := engine.New(
+		&engine.MayUseEvaluator{},
+		&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}},
+	)
+
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+
+	// Six records, each two minutes apart. No 60-second window contains ≥5,
+	// so every replayed call must be allowed.
+	records := make([]auditLogLine, 6)
+	for i := range records {
+		ts := base.Add(time.Duration(i) * 2 * time.Minute).UnixNano()
+		records[i] = makeAuditRecord("sess-replay-spread", uint64(i+1), "search_web", "allow", ts)
+	}
+
+	results, err := replaySession(context.Background(), records, pol, st, pipeline)
+	if err != nil {
+		t.Fatalf("replaySession: %v", err)
+	}
+	if len(results) != 6 {
+		t.Fatalf("expected 6 results, got %d", len(results))
+	}
+	for i, r := range results {
+		if r.NewDecision != string(engine.Allow) {
+			t.Errorf("record %d (T+%dm): want allow, got %s (reason: %s)",
+				i+1, i*2, r.NewDecision, r.Reason)
+		}
+	}
+}
+
+// TestReplaySession_RateLimitBurstDenied verifies that when six audit records
+// for a rate-limited tool fall within a single 60-second window, the sixth
+// replayed call is denied. This confirms the timestamp fix does not suppress
+// legitimate rate-limit enforcement during replay.
+func TestReplaySession_RateLimitBurstDenied(t *testing.T) {
+	pol := makeRateLimitPolicy(t)
+	st := store.NewTestDB(t)
+	pipeline := engine.New(
+		&engine.MayUseEvaluator{},
+		&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}},
+	)
+
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+
+	// Six records, each two seconds apart — all within the 60-second window.
+	// The 6th replayed call must be denied.
+	records := make([]auditLogLine, 6)
+	for i := range records {
+		ts := base.Add(time.Duration(i) * 2 * time.Second).UnixNano()
+		records[i] = makeAuditRecord("sess-replay-burst", uint64(i+1), "search_web", "allow", ts)
+	}
+
+	results, err := replaySession(context.Background(), records, pol, st, pipeline)
+	if err != nil {
+		t.Fatalf("replaySession: %v", err)
+	}
+	if len(results) != 6 {
+		t.Fatalf("expected 6 results, got %d", len(results))
+	}
+	for i := 0; i < 5; i++ {
+		if results[i].NewDecision != string(engine.Allow) {
+			t.Errorf("record %d: want allow, got %s", i+1, results[i].NewDecision)
+		}
+	}
+	if results[5].NewDecision != string(engine.Deny) {
+		t.Errorf("record 6: want deny (rate limit), got %s (reason: %s)",
+			results[5].NewDecision, results[5].Reason)
 	}
 }

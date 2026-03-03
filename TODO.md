@@ -2653,7 +2653,8 @@ duplicate set.
 ---
 
 ### Task 16.4 — Fix rate-limit timestamp accuracy in simulate/replay
-**Files:** `cmd/simulate.go`, `cmd/audit/replay.go`
+**Status:** Complete
+**Files:** `cmd/simulate.go`, `cmd/audit/replay.go`, `cmd/simulate_test.go`, `cmd/audit/audit_test.go`
 **Why:** `RateLimitEvaluator.Evaluate()` uses `call.RequestedAt` to determine rate
 windows, but `AppendEvent` overwrites `RecordedAt` with `time.Now()`. In simulate and
 replay, all events are effectively timestamped "now", collapsing the original time
@@ -2669,6 +2670,16 @@ that is a demo risk.
 - Add a test: a trace with 6 calls to `search_web` over 10 minutes should NOT trigger
   a `rate_limit` of `5/minute` when simulated, because the calls are spread across
   10 minutes in the original trace timestamps.
+
+**Notes:** `AppendEvent` already only auto-sets `RecordedAt` when it is zero, so the
+fix is a one-line addition in each caller: `RecordedAt: requestedAt.UnixNano()` in
+`evaluateSession` (simulate) and `RecordedAt: rec.RecordedAt` in `replaySession`
+(replay). No store changes were needed.
+Four tests added: `TestEvaluateSession_RateLimitSpreadAllowed` and
+`TestEvaluateSession_RateLimitBurstDenied` in `cmd/simulate_test.go`;
+`TestReplaySession_RateLimitSpreadAllowed` and `TestReplaySession_RateLimitBurstDenied`
+in `cmd/audit/audit_test.go`. Both spread and burst cases are covered for both paths.
+`go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all pass clean.
 
 ---
 

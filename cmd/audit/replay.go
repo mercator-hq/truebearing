@@ -237,12 +237,16 @@ func replaySession(
 
 		// Append the event with the NEW decision so that subsequent calls
 		// within this session see the correct sequence history for the new
-		// policy, not the original policy's decisions.
+		// policy, not the original policy's decisions. RecordedAt is set to
+		// the original audit log timestamp so that the RateLimitEvaluator's
+		// window query reflects the original call distribution rather than
+		// collapsing all events to the current wall-clock time.
 		event := &store.SessionEvent{
 			SessionID:  rec.SessionID,
 			ToolName:   rec.ToolName,
 			Decision:   string(newDecision.Action),
 			PolicyRule: newDecision.RuleID,
+			RecordedAt: rec.RecordedAt,
 		}
 		if err := st.AppendEvent(event); err != nil {
 			return nil, fmt.Errorf("appending replay event for tool %q: %w", rec.ToolName, err)

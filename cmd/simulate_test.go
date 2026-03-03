@@ -2,12 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mercator-hq/truebearing/internal/engine"
+	"github.com/mercator-hq/truebearing/internal/policy"
+	"github.com/mercator-hq/truebearing/internal/store"
 )
 
 // --- groupTraceBySession ---
@@ -329,6 +335,128 @@ func TestRunSimulate_PaymentSequenceViolation(t *testing.T) {
 	// Summary should tally exactly 1 deny.
 	if !strings.Contains(out, "1 deny") {
 		t.Errorf("summary should report 1 deny; got:\n%s", out)
+	}
+}
+
+// --- rate-limit timestamp accuracy ---
+
+// TestEvaluateSession_RateLimitSpreadAllowed verifies that six calls to a
+// rate-limited tool, spread two minutes apart over ten minutes, are all allowed
+// when simulated. The fix under test is that AppendEvent receives the original
+// trace timestamp (not time.Now()), so CountSessionEventsSince correctly finds
+// zero calls inside the 60-second window for each successive call.
+func TestEvaluateSession_RateLimitSpreadAllowed(t *testing.T) {
+	polYAML := `
+version: "1.0"
+agent: search-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 5
+      window_seconds: 60
+`
+	pol, err := policy.ParseBytes([]byte(polYAML), "")
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+
+	st := store.NewTestDB(t)
+	pipeline := engine.New(
+		&engine.MayUseEvaluator{},
+		&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}},
+	)
+
+	// Base time: fixed so the test is deterministic.
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+
+	// Six calls, each two minutes apart. No 60-second window contains ≥5 calls,
+	// so every call must be allowed.
+	entries := make([]traceEntry, 6)
+	for i := range entries {
+		entries[i] = traceEntry{
+			SessionID:   "sess-rate-spread",
+			AgentName:   "search-agent",
+			ToolName:    "search_web",
+			RequestedAt: base.Add(time.Duration(i) * 2 * time.Minute).Format(time.RFC3339),
+		}
+	}
+
+	results, err := evaluateSession(context.Background(), entries, pol, st, pipeline)
+	if err != nil {
+		t.Fatalf("evaluateSession: %v", err)
+	}
+	if len(results) != 6 {
+		t.Fatalf("expected 6 results, got %d", len(results))
+	}
+	for i, r := range results {
+		if r.NewDecision != string(engine.Allow) {
+			t.Errorf("call %d (T+%dm): want allow, got %s (reason: %s)",
+				i+1, i*2, r.NewDecision, r.Reason)
+		}
+	}
+}
+
+// TestEvaluateSession_RateLimitBurstDenied verifies that when six calls to a
+// rate-limited tool occur within a single 60-second window, the sixth call is
+// denied. This confirms that the timestamp fix does not suppress legitimate
+// rate-limit enforcement.
+func TestEvaluateSession_RateLimitBurstDenied(t *testing.T) {
+	polYAML := `
+version: "1.0"
+agent: search-agent
+enforcement_mode: block
+may_use:
+  - search_web
+tools:
+  search_web:
+    rate_limit:
+      max_calls: 5
+      window_seconds: 60
+`
+	pol, err := policy.ParseBytes([]byte(polYAML), "")
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+
+	st := store.NewTestDB(t)
+	pipeline := engine.New(
+		&engine.MayUseEvaluator{},
+		&engine.RateLimitEvaluator{Store: &engine.StoreBackend{Store: st}},
+	)
+
+	// Six calls within 10 seconds — all inside the 60-second window.
+	// The 6th call must be denied (5 preceding allowed calls are in the window).
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	entries := make([]traceEntry, 6)
+	for i := range entries {
+		entries[i] = traceEntry{
+			SessionID:   "sess-rate-burst",
+			AgentName:   "search-agent",
+			ToolName:    "search_web",
+			RequestedAt: base.Add(time.Duration(i) * 2 * time.Second).Format(time.RFC3339),
+		}
+	}
+
+	results, err := evaluateSession(context.Background(), entries, pol, st, pipeline)
+	if err != nil {
+		t.Fatalf("evaluateSession: %v", err)
+	}
+	if len(results) != 6 {
+		t.Fatalf("expected 6 results, got %d", len(results))
+	}
+	// First five calls must be allowed.
+	for i := 0; i < 5; i++ {
+		if results[i].NewDecision != string(engine.Allow) {
+			t.Errorf("call %d: want allow, got %s", i+1, results[i].NewDecision)
+		}
+	}
+	// Sixth call must be denied.
+	if results[5].NewDecision != string(engine.Deny) {
+		t.Errorf("call 6: want deny (rate limit), got %s (reason: %s)",
+			results[5].NewDecision, results[5].Reason)
 	}
 }
 

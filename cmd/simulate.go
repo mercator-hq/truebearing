@@ -239,11 +239,16 @@ func evaluateSession(
 
 		// Append the event with the resulting decision so that subsequent
 		// SequenceEvaluator calls within this session see the correct history.
+		// RecordedAt is set to the original trace timestamp so that the
+		// RateLimitEvaluator's window query (which filters by recorded_at)
+		// reflects the original call distribution rather than collapsing all
+		// events to the current wall-clock time.
 		event := &store.SessionEvent{
 			SessionID:  entry.SessionID,
 			ToolName:   entry.ToolName,
 			Decision:   string(decision.Action),
 			PolicyRule: decision.RuleID,
+			RecordedAt: requestedAt.UnixNano(),
 		}
 		if err := st.AppendEvent(event); err != nil {
 			return nil, fmt.Errorf("appending simulate event for tool %q seq %d: %w", entry.ToolName, i+1, err)
