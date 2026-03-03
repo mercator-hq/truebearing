@@ -60,6 +60,10 @@ func (e *ContentEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *sessio
 					pred.Argument, pred.Operator, pred.Value,
 				),
 				RuleID: fmt.Sprintf("content.%s.%s", pred.Argument, pred.Operator),
+				Feedback: &DenyFeedback{
+					ReasonCode: "content_blocked",
+					Suggestion: fmt.Sprintf("Tool call was blocked by a content predicate: argument %q must not satisfy %s %q. Modify the argument value and retry.", pred.Argument, pred.Operator, pred.Value),
+				},
 			}, nil
 		}
 	}

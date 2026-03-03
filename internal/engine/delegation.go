@@ -80,5 +80,9 @@ func (e *DelegationEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *ses
 			call.ToolName, call.ParentAgent,
 		),
 		RuleID: "delegation.exceeds_parent",
+		Feedback: &DenyFeedback{
+			ReasonCode: "delegation_exceeded",
+			Suggestion: fmt.Sprintf("Tool %q is not within the parent agent's delegated scope. Re-register the parent agent with an expanded tool set or use a root agent credential.", call.ToolName),
+		},
 	}, nil
 }

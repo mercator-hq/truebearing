@@ -29,6 +29,44 @@ const (
 	ShadowDeny Action = "shadow_deny"
 )
 
+// DenyFeedback carries machine-readable context for a Deny decision.
+// It is embedded in the JSON-RPC error response's data field so LLM agents
+// can parse the denial reason and automatically retry with the correct
+// prerequisites satisfied — the "self-repair" capability described in the
+// competitive positioning doc.
+//
+// Invariant: Feedback is non-nil for every Deny decision produced by a policy
+// evaluator. It is nil for Deny decisions created by the pipeline itself when
+// an evaluator returns a non-nil error (fail-closed path), since those
+// originate from internal errors, not actionable policy violations.
+type DenyFeedback struct {
+	// ReasonCode is a stable machine-readable string identifying the denial
+	// category. One code per evaluator:
+	//   may_use_denied            — MayUseEvaluator
+	//   budget_exceeded           — BudgetEvaluator
+	//   taint_blocked             — TaintEvaluator
+	//   sequence_only_after       — SequenceEvaluator (only_after violation)
+	//   sequence_never_after      — SequenceEvaluator (never_after violation)
+	//   sequence_requires_prior_n — SequenceEvaluator (requires_prior_n violation)
+	//   delegation_exceeded       — DelegationEvaluator
+	//   rate_limit_exceeded       — RateLimitEvaluator
+	//   content_blocked           — ContentEvaluator
+	//   env_mismatch              — EnvEvaluator
+	//   escalation_pending        — EscalationEvaluator
+	ReasonCode string `json:"reason_code"`
+
+	// UnsatisfiedPrerequisites lists the tool names that must be called before
+	// the blocked tool can succeed. Non-empty only for sequence_only_after and
+	// sequence_requires_prior_n denials. The agent should call each listed tool
+	// (in any order) before retrying the blocked tool.
+	UnsatisfiedPrerequisites []string `json:"unsatisfied_prerequisites,omitempty"`
+
+	// Suggestion is a plain-English sentence the agent can inject into its own
+	// context as a system message to guide a retry. It is phrased as an
+	// actionable instruction rather than a description of the violation.
+	Suggestion string `json:"suggestion"`
+}
+
 // Decision is the output of a single pipeline evaluation. It carries the
 // enforcement outcome and the policy rule that produced it.
 type Decision struct {
@@ -43,6 +81,11 @@ type Decision struct {
 	// decision (e.g. "may_use", "budget.max_tool_calls", "sequence.only_after").
 	// Empty for Allow decisions.
 	RuleID string
+
+	// Feedback carries structured machine-readable context for a Deny decision.
+	// It is non-nil for Deny decisions produced by policy evaluators and nil for
+	// all other decision actions or for error-converted denials.
+	Feedback *DenyFeedback
 }
 
 // ToolCall is the engine's internal representation of an intercepted MCP

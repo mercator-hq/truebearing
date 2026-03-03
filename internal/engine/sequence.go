@@ -79,9 +79,11 @@ func (e *SequenceEvaluator) Evaluate(_ context.Context, call *ToolCall, sess *se
 
 	var violations []string
 
-	// only_after: every listed tool must appear at least once in history.
+	// Track missing only_after prerequisites for structured feedback.
+	var missingOnlyAfter []string
 	for _, required := range seq.OnlyAfter {
 		if !history[required].seen {
+			missingOnlyAfter = append(missingOnlyAfter, required)
 			violations = append(violations, fmt.Sprintf(
 				"sequence.only_after: %q has not been called in this session (required before %q)",
 				required, call.ToolName,
@@ -89,9 +91,11 @@ func (e *SequenceEvaluator) Evaluate(_ context.Context, call *ToolCall, sess *se
 		}
 	}
 
-	// never_after: none of the listed tools may appear anywhere in history.
+	// Track never_after blockers for structured feedback.
+	var blockedByNeverAfter []string
 	for _, forbidden := range seq.NeverAfter {
 		if history[forbidden].seen {
+			blockedByNeverAfter = append(blockedByNeverAfter, forbidden)
 			violations = append(violations, fmt.Sprintf(
 				"sequence.never_after: %q was already called in this session and permanently blocks %q",
 				forbidden, call.ToolName,
@@ -99,10 +103,12 @@ func (e *SequenceEvaluator) Evaluate(_ context.Context, call *ToolCall, sess *se
 		}
 	}
 
-	// requires_prior_n: the named tool must appear at least N times in history.
+	// Track missing requires_prior_n prerequisites for structured feedback.
+	var missingRequiresPriorN []string
 	if seq.RequiresPriorN != nil {
 		count := history[seq.RequiresPriorN.Tool].count
 		if count < seq.RequiresPriorN.Count {
+			missingRequiresPriorN = append(missingRequiresPriorN, seq.RequiresPriorN.Tool)
 			violations = append(violations, fmt.Sprintf(
 				"sequence.requires_prior_n: %q must be called at least %d time(s) before %q (%d call(s) recorded)",
 				seq.RequiresPriorN.Tool, seq.RequiresPriorN.Count, call.ToolName, count,
@@ -114,9 +120,35 @@ func (e *SequenceEvaluator) Evaluate(_ context.Context, call *ToolCall, sess *se
 		return Decision{Action: Allow}, nil
 	}
 
+	// Build structured feedback. Priority: only_after > never_after > requires_prior_n.
+	// Only_after is the most common and most actionable: the agent knows exactly
+	// which tools to call before retrying. Never_after and requires_prior_n are
+	// included as fallbacks for sessions where only_after is satisfied.
+	var feedback *DenyFeedback
+	switch {
+	case len(missingOnlyAfter) > 0:
+		feedback = &DenyFeedback{
+			ReasonCode:               "sequence_only_after",
+			UnsatisfiedPrerequisites: missingOnlyAfter,
+			Suggestion:               fmt.Sprintf("Call %s first, then retry %q.", strings.Join(missingOnlyAfter, ", then "), call.ToolName),
+		}
+	case len(blockedByNeverAfter) > 0:
+		feedback = &DenyFeedback{
+			ReasonCode: "sequence_never_after",
+			Suggestion: fmt.Sprintf("Tool %q cannot be called after %s has run in this session. Start a new session to retry.", call.ToolName, strings.Join(blockedByNeverAfter, ", ")),
+		}
+	default:
+		feedback = &DenyFeedback{
+			ReasonCode:               "sequence_requires_prior_n",
+			UnsatisfiedPrerequisites: missingRequiresPriorN,
+			Suggestion:               fmt.Sprintf("Call %s the required number of times first, then retry %q.", strings.Join(missingRequiresPriorN, ", "), call.ToolName),
+		}
+	}
+
 	return Decision{
-		Action: Deny,
-		Reason: strings.Join(violations, "; "),
-		RuleID: "sequence",
+		Action:   Deny,
+		Reason:   strings.Join(violations, "; "),
+		RuleID:   "sequence",
+		Feedback: feedback,
 	}, nil
 }

@@ -2340,35 +2340,31 @@ Corvera) may not be using Anthropic. One-line fix that expands our stated surfac
 ---
 
 ### Task 14.3 — Proxy: Return structured retry feedback on deny
-**Files:** `internal/proxy/proxy.go`, `internal/engine/engine.go`
+**Status:** Complete
+**Files:**
+- `internal/engine/types.go` — Added `DenyFeedback` struct and `Feedback *DenyFeedback` field to `Decision`
+- `internal/engine/mayuse.go` — `reason_code: "may_use_denied"`
+- `internal/engine/budget.go` — `reason_code: "budget_exceeded"`
+- `internal/engine/taint.go` — `reason_code: "taint_blocked"`
+- `internal/engine/sequence.go` — `reason_code: "sequence_only_after"`, `"sequence_never_after"`, `"sequence_requires_prior_n"` (restructured violation tracking to populate `unsatisfied_prerequisites`)
+- `internal/engine/escalation.go` — `reason_code: "escalation_pending"` on `Escalate` decision
+- `internal/engine/delegation.go` — `reason_code: "delegation_exceeded"`
+- `internal/engine/ratelimit.go` — `reason_code: "rate_limit_exceeded"`
+- `internal/engine/content.go` — `reason_code: "content_blocked"`
+- `internal/engine/env.go` — `reason_code: "env_mismatch"`
+- `internal/proxy/proxy.go` — Added `writeJSONRPCDeny` (new function, error code -32000, structured data object); deny branch now calls `writeJSONRPCDeny` instead of `writeJSONRPCError`; `writeJSONRPCError` retained unchanged for virtual-tool error paths
+- `internal/proxy/proxy_test.go` — `TestProxy_DenyResponse_ContainsStructuredFeedback` verifies `error.data.reason_code == "may_use_denied"` and non-empty `error.data.suggestion` and `error.data.blocked_tool`
+
+**Notes:**
+- `writeJSONRPCError` is kept unchanged for non-policy paths (virtual tool errors, escalation-creation failures). Only the policy-Deny path uses the new `writeJSONRPCDeny`.
+- `DenyFeedback` is set on `Escalate` decisions (EscalationEvaluator) as well as `Deny` decisions, but the proxy only reads `Feedback` in `writeJSONRPCDeny` — escalation responses still use `writeJSONRPCEscalated`. The field is available for Task 15.5 if needed.
+- Sequence evaluator restructured: `only_after` missing tools are tracked in a separate slice for `unsatisfied_prerequisites`; priority order for `reason_code` when multiple predicates fire: `only_after > never_after > requires_prior_n`.
+- `Feedback` is nil for error-converted denials (evaluator returns non-nil error → pipeline → Deny). `writeJSONRPCDeny` handles this gracefully with empty strings for `reason_code`/`suggestion`.
+
 **Why:** This is Salus's single strongest differentiator. When Salus blocks an action,
 58% of blocked calls self-correct because the agent receives structured feedback on
 *what it needs to do first*. Our current deny returns a JSON-RPC error with a human-readable
 reason string. An LLM agent cannot parse that and retry correctly.
-
-**What to build:**
-- Extend the JSON-RPC error response on deny to include a structured `data` field
-  alongside the `message`. Format:
-  ```json
-  {
-    "code": -32000,
-    "message": "sequence: only_after not satisfied: [verify_invoice, manager_approval]",
-    "data": {
-      "blocked_tool": "execute_wire_transfer",
-      "reason_code": "sequence_only_after",
-      "unsatisfied_prerequisites": ["verify_invoice", "manager_approval"],
-      "suggestion": "Call verify_invoice first, then manager_approval, then retry."
-    }
-  }
-  ```
-- `reason_code` should be a stable machine-readable string, one per evaluator:
-  `sequence_only_after`, `sequence_never_after`, `taint_blocked`, `budget_exceeded`,
-  `escalation_pending`, `may_use_denied`.
-- `unsatisfied_prerequisites` lists the tools that must run before the blocked tool.
-- `suggestion` is a plain-English sentence the agent can inject into its own context
-  as a system message to guide the retry.
-- Add a test: denied call response must contain `error.data.reason_code` and
-  `error.data.suggestion` as non-empty strings.
 
 ---
 

@@ -51,5 +51,9 @@ func (e *MayUseEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *session
 		Action: Deny,
 		Reason: fmt.Sprintf("tool %q is not in the policy may_use list", call.ToolName),
 		RuleID: "may_use",
+		Feedback: &DenyFeedback{
+			ReasonCode: "may_use_denied",
+			Suggestion: fmt.Sprintf("Tool %q is not permitted by this policy. Retry with one of the allowed tools listed in the policy may_use declaration.", call.ToolName),
+		},
 	}, nil
 }

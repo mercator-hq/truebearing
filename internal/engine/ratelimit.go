@@ -66,6 +66,10 @@ func (e *RateLimitEvaluator) Evaluate(_ context.Context, call *ToolCall, sess *s
 				call.ToolName, count, rl.WindowSeconds, rl.MaxCalls,
 			),
 			RuleID: fmt.Sprintf("rate_limit.%s", call.ToolName),
+			Feedback: &DenyFeedback{
+				ReasonCode: "rate_limit_exceeded",
+				Suggestion: fmt.Sprintf("Tool %q has exceeded its call frequency limit. Wait %d second(s) for the window to roll and retry.", call.ToolName, rl.WindowSeconds),
+			},
 		}, nil
 	}
 

@@ -60,5 +60,9 @@ func (e *EnvEvaluator) Evaluate(_ context.Context, call *ToolCall, _ *session.Se
 			required, agentEnvDisplay,
 		),
 		RuleID: "env.mismatch",
+		Feedback: &DenyFeedback{
+			ReasonCode: "env_mismatch",
+			Suggestion: fmt.Sprintf("This policy requires an agent registered with --env %q. Re-register the agent with the correct environment flag and retry.", required),
+		},
 	}, nil
 }

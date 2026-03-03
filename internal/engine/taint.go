@@ -70,6 +70,10 @@ func (e *TaintEvaluator) Evaluate(_ context.Context, call *ToolCall, sess *sessi
 						call.ToolName, blocked,
 					),
 					RuleID: "taint.session_tainted",
+					Feedback: &DenyFeedback{
+						ReasonCode: "taint_blocked",
+						Suggestion: fmt.Sprintf("Session is tainted by a previous call to %q. Call the designated taint-clearing tool first, then retry %q.", blocked, call.ToolName),
+					},
 				}, nil
 			}
 		}

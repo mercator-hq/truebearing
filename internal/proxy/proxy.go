@@ -528,7 +528,7 @@ func (p *Proxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 		p.rp.ServeHTTP(w, r)
 
 	case engine.Deny:
-		writeJSONRPCError(w, mcpReq.ID, decision.Reason, decision.RuleID)
+		writeJSONRPCDeny(w, mcpReq.ID, params.Name, decision)
 
 	case engine.Escalate:
 		// Create a pending escalation record. The agent polls
@@ -658,6 +658,58 @@ func writeJSONRPCError(w http.ResponseWriter, id json.RawMessage, message, ruleI
 			Code:    -32603,
 			Message: message,
 			Data:    dataObj{RuleID: ruleID, Decision: "deny"},
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	body, _ := json.Marshal(resp)
+	_, _ = w.Write(body)
+}
+
+// writeJSONRPCDeny writes a JSON-RPC 2.0 error response for a policy denial.
+// It extends the standard error with a structured data object so LLM agents
+// can parse the denial reason and self-correct without human intervention.
+//
+// The data object contains:
+//   - blocked_tool: the tool name that was denied
+//   - reason_code:  stable machine-readable string from the evaluator's DenyFeedback
+//   - unsatisfied_prerequisites: tool names the agent must call first (may be empty)
+//   - suggestion:   plain-English instruction the agent can use to guide a retry
+//
+// When decision.Feedback is nil (pipeline-level error → deny), only blocked_tool
+// is populated in data; reason_code and suggestion are empty strings.
+func writeJSONRPCDeny(w http.ResponseWriter, id json.RawMessage, blockedTool string, decision engine.Decision) {
+	type dataObj struct {
+		BlockedTool              string   `json:"blocked_tool"`
+		ReasonCode               string   `json:"reason_code"`
+		UnsatisfiedPrerequisites []string `json:"unsatisfied_prerequisites,omitempty"`
+		Suggestion               string   `json:"suggestion"`
+	}
+	type errorObj struct {
+		// -32000 is in the JSON-RPC server-error range (-32000 to -32099).
+		// It is the conventional code for application-defined server errors.
+		Code    int     `json:"code"`
+		Message string  `json:"message"`
+		Data    dataObj `json:"data"`
+	}
+	type response struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Error   errorObj        `json:"error"`
+	}
+	data := dataObj{BlockedTool: blockedTool}
+	if decision.Feedback != nil {
+		data.ReasonCode = decision.Feedback.ReasonCode
+		data.UnsatisfiedPrerequisites = decision.Feedback.UnsatisfiedPrerequisites
+		data.Suggestion = decision.Feedback.Suggestion
+	}
+	resp := response{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: errorObj{
+			Code:    -32000,
+			Message: decision.Reason,
+			Data:    data,
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")

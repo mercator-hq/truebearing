@@ -57,6 +57,10 @@ func (e *BudgetEvaluator) Evaluate(_ context.Context, _ *ToolCall, sess *session
 				sess.EstimatedCostUSD, b.MaxCostUSD,
 			),
 			RuleID: "budget.max_tool_calls",
+			Feedback: &DenyFeedback{
+				ReasonCode: "budget_exceeded",
+				Suggestion: "Session budget limits have been reached. Start a new session or contact the operator to increase the configured limits.",
+			},
 		}, nil
 	}
 
@@ -68,6 +72,10 @@ func (e *BudgetEvaluator) Evaluate(_ context.Context, _ *ToolCall, sess *session
 				sess.ToolCallCount, b.MaxToolCalls,
 			),
 			RuleID: "budget.max_tool_calls",
+			Feedback: &DenyFeedback{
+				ReasonCode: "budget_exceeded",
+				Suggestion: "Session tool call budget has been reached. Start a new session or contact the operator to increase the configured limit.",
+			},
 		}, nil
 	}
 
@@ -79,6 +87,10 @@ func (e *BudgetEvaluator) Evaluate(_ context.Context, _ *ToolCall, sess *session
 				sess.EstimatedCostUSD, b.MaxCostUSD,
 			),
 			RuleID: "budget.max_cost_usd",
+			Feedback: &DenyFeedback{
+				ReasonCode: "budget_exceeded",
+				Suggestion: "Session cost budget has been reached. Start a new session or contact the operator to increase the configured limit.",
+			},
 		}, nil
 	}
 

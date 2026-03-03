@@ -109,6 +109,10 @@ func (e *EscalationEvaluator) Evaluate(_ context.Context, call *ToolCall, sess *
 			rule.ArgumentPath, rule.Operator, rule.Value,
 		),
 		RuleID: "escalation",
+		Feedback: &DenyFeedback{
+			ReasonCode: "escalation_pending",
+			Suggestion: "This action requires human approval. Poll check_escalation_status with the returned escalation_id to retry once an operator approves.",
+		},
 	}, nil
 }
 

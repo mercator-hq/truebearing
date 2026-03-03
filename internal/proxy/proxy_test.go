@@ -309,6 +309,68 @@ func TestProxy_ToolCall_ValidAuth_ForwardedUpstream(t *testing.T) {
 	}
 }
 
+// TestProxy_DenyResponse_ContainsStructuredFeedback verifies that a denied tool
+// call response carries the structured data object required by Task 14.3:
+// error.data.reason_code and error.data.suggestion must be non-empty so that
+// LLM agents can parse the denial and self-correct without human intervention.
+func TestProxy_DenyResponse_ContainsStructuredFeedback(t *testing.T) {
+	proxyServer, token := newTestProxyServer(t, nil)
+
+	// Call a tool that is NOT in the may_use list. This triggers MayUseEvaluator
+	// to deny with reason_code "may_use_denied".
+	deniedBody := `{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"not_in_policy","arguments":{}}}`
+
+	req, err := http.NewRequest(http.MethodPost, proxyServer.URL+"/mcp/v1", strings.NewReader(deniedBody))
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-TrueBearing-Session-ID", "sess-deny-feedback-test")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200 (JSON-RPC errors use 200), got %d", resp.StatusCode)
+	}
+
+	// Parse the JSON-RPC error response to verify the structured data fields.
+	var body struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    struct {
+				BlockedTool string `json:"blocked_tool"`
+				ReasonCode  string `json:"reason_code"`
+				Suggestion  string `json:"suggestion"`
+			} `json:"data"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding response body: %v", err)
+	}
+
+	if body.Error.Code != -32000 {
+		t.Errorf("error.code: want -32000, got %d", body.Error.Code)
+	}
+	if body.Error.Message == "" {
+		t.Error("error.message must not be empty")
+	}
+	if body.Error.Data.BlockedTool != "not_in_policy" {
+		t.Errorf("error.data.blocked_tool: want %q, got %q", "not_in_policy", body.Error.Data.BlockedTool)
+	}
+	if body.Error.Data.ReasonCode != "may_use_denied" {
+		t.Errorf("error.data.reason_code: want %q, got %q", "may_use_denied", body.Error.Data.ReasonCode)
+	}
+	if body.Error.Data.Suggestion == "" {
+		t.Error("error.data.suggestion must not be empty")
+	}
+}
+
 // TestProxy_CaptureTrace_WritesEntries verifies that --capture-trace writes
 // exactly one JSONL line per tool call, with the correct session_id, agent_name,
 // tool_name, and a non-empty requested_at. Both calls share the same session ID
