@@ -340,9 +340,9 @@ function sleep(ms: number): Promise<void> {
  * Design: SDK detection uses duck typing on the withOptions method so the SDK
  * packages remain optional runtime dependencies. PolicyProxy works without them
  * when proxyUrl is supplied explicitly and the caller configures headers
- * themselves. This mirrors the Python SDK's try/import pattern.
+ * themselves.
  */
-function configureClient(
+export function configureClient(
   client: unknown,
   proxyUrl: string,
   jwt: string | null,
@@ -354,26 +354,65 @@ function configureClient(
   }
   extraHeaders["X-TrueBearing-Session-ID"] = sessionId;
 
-  // Anthropic SDK (and any compatible SDK) exposes withOptions() to return a
-  // new client instance with overridden options. Use duck typing so the package
-  // stays free of runtime dependencies.
+  if (isAnthropicClient(client)) {
+    return client.withOptions({
+      baseURL: proxyUrl,
+      defaultHeaders: extraHeaders,
+    });
+  }
+
+  if (isOpenAIClient(client)) {
+    // OpenAI client is immutable-ish, so we construct a new instance.
+    // We use the constructor from the instance to avoid importing the class.
+    const Ctor = client.constructor as new (opts: any) => any;
+    return new Ctor({
+      apiKey: client.apiKey,
+      baseURL: proxyUrl,
+      organization: client.organization,
+      project: client.project,
+      timeout: client.timeout,
+      maxRetries: client.maxRetries,
+      defaultHeaders: { ...client.defaultHeaders, ...extraHeaders },
+    });
+  }
+
+  // Unrecognised client: throw error.
+  throw new TypeError(
+    "Unsupported client. TrueBearing SDK currently supports Anthropic and OpenAI clients.\n" +
+      "For other clients, please configure the proxy URL manually:\n\n" +
+      `  const client = new MyClient({\n` +
+      `    baseURL: "${proxyUrl}",\n` +
+      `    headers: {\n` +
+      `      "Authorization": "Bearer ${jwt || "<jwt>"}",\n` +
+      `      "X-TrueBearing-Session-ID": "${sessionId}"\n` +
+      `    }\n` +
+      `  });\n` +
+      "\nSee https://docs.mercator.dev/integrations for more details.",
+  );
+}
+
+function isAnthropicClient(
+  client: any,
+): client is { withOptions: (opts: any) => any } {
   if (
     client !== null &&
     typeof client === "object" &&
     "withOptions" in client &&
     typeof (client as { withOptions: unknown }).withOptions === "function"
   ) {
-    return (
-      client as {
-        withOptions: (opts: {
-          baseURL: string;
-          defaultHeaders: Record<string, string>;
-        }) => unknown;
-      }
-    ).withOptions({ baseURL: proxyUrl, defaultHeaders: extraHeaders });
+    return true;
   }
+  return false;
+}
 
-  // Unrecognised client: return unchanged. The caller is responsible for
-  // header injection in this case (e.g. via a custom fetch wrapper).
-  return client;
+function isOpenAIClient(
+  client: any,
+): client is { apiKey: string; [key: string]: any } {
+  return (
+    client !== null &&
+    typeof client === "object" &&
+    client.constructor &&
+    client.constructor.name === "OpenAI" &&
+    "apiKey" in client
+  );
 }

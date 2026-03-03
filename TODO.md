@@ -2758,21 +2758,14 @@ All existing tests updated to pass `vertical="other"` to skip the new Q0.
 
 ---
 
-### Task 17.3 — Node.js SDK: raise loud error for unsupported clients
-
-**File:** `sdks/node/src/proxy.ts` (or equivalent)
-**Why:** Same silent failure risk as the Python SDK (Task 14.1), but for Node.js.
-Applies to any Node agent using non-Anthropic clients.
-
-**What to build:**
-
-- Mirror Task 14.1 exactly in the Node SDK.
-- If the passed client is not an Anthropic SDK instance, throw a `TypeError` with the
-  manual `baseURL` configuration snippet.
-- If the client is the Anthropic Node SDK, configure via `baseURL` option.
-- Add OpenAI Node SDK support: detect `openai` package, set `baseURL` on the
-  `OpenAI` constructor options.
-- Unit tests for both paths.
+- [x] **Task 17.3** — Node.js SDK: raise loud error for unsupported clients
+      **Status:** Complete
+      **Files:** `sdks/node/src/proxy.ts`
+      **Notes:**
+  - Implemented `configureClient` to check for Anthropic and OpenAI clients via duck typing.
+  - Raises `TypeError` with a helpful message and manual configuration example for unsupported clients.
+  - OpenAI support constructs a new client instance with the proxy URL, preserving other options.
+  - Zero runtime dependencies maintained (no `openai` import).
 
 ---
 
