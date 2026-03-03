@@ -2488,40 +2488,41 @@ reason string. An LLM agent cannot parse that and retry correctly.
 ---
 
 ### Task 15.3 — Policy: Vertical-specific policy packs for target companies
-**Directory:** `policy-packs/`
-**Why:** When a design partner from Avallon AI or Ritivel first looks at the repo,
-finding a `policy-packs/insurance-claims/` or `policy-packs/life-sciences-regulatory/`
-folder tells them immediately: "these people built this for companies like us."
-This is a conversion tool, not an engineering feature.
+**Status:** Complete
+**Files:**
+- `policy-packs/insurance-claims/claims-processing.policy.yaml` (new)
+- `policy-packs/insurance-claims/README.md` (new)
+- `policy-packs/legal-ops/privileged-document-guard.policy.yaml` (new)
+- `policy-packs/legal-ops/README.md` (new)
+- `policy-packs/life-sciences/regulatory-submission.policy.yaml` (new)
+- `policy-packs/life-sciences/README.md` (new)
+- `policy-packs/healthcare-billing/hipaa-billing-guard.policy.yaml` (new)
+- `policy-packs/healthcare-billing/README.md` (new)
 
-**What to build:**
-One policy file per vertical, with inline comments explaining the business rationale
-for each rule. Each policy should be lintable and explainable with zero errors.
+**Notes:** All four packs lint clean with zero errors (`truebearing policy lint`). L008
+(no webhook_url) and L009 (shadow mode advisory) are expected informational warnings.
 
-- `policy-packs/insurance-claims/claims-processing.policy.yaml`
-  - Sequence guard: `approve_claim` only after `[verify_policy, assess_damage, check_fraud_signals]`
-  - Taint: `read_claimant_pii` taints session; `run_compliance_check` clears
-  - Escalate: claim value > threshold (argument predicate)
-  - Budget: max tool calls per session
-  - Comment block: "Satisfies state insurance regulatory audit trail requirements"
+- **insurance-claims**: `approve_claim` requires `[verify_policy, assess_damage,
+  check_fraud_signals]` + `requires_prior_n: check_fraud_signals count:1` + PII taint
+  (`read_claimant_pii` applies, `run_compliance_check` clears) + escalation >$25k.
+  Regulatory anchor: NY Ins. Law §2601 / CA Ins. Code §790.03.
 
-- `policy-packs/legal-ops/privileged-document-guard.policy.yaml`
-  - Taint: `read_privileged_document` taints session
-  - `never_after`: `transmit_to_external` if session tainted
-  - Escalate: any action on matter with `status: active_litigation`
-  - Comment: "Addresses attorney-client privilege protection for agentic document review"
+- **legal-ops**: `read_privileged_document` applies taint; `run_privilege_review` clears;
+  `transmit_to_external` and `generate_summary` both have `never_after: [read_privileged_document]`.
+  `transmit_to_external` escalates on `matter_status == active_litigation`. Regulatory
+  anchor: Upjohn privilege doctrine.
 
-- `policy-packs/life-sciences/regulatory-submission.policy.yaml`
-  - Sequence: `submit_to_fda` only after `[generate_draft, internal_review, legal_sign_off]`
-  - `never_after`: `submit_to_fda` if `amend_document` ran after `legal_sign_off`
-  - Escalate: any `submit_*` action
-  - Comment: "Supports 21 CFR Part 11 electronic records requirements"
+- **life-sciences**: `submit_to_fda` requires `[generate_draft, internal_review, legal_sign_off]`
+  with `never_after: [amend_document]` for permanent block on any amendment.
+  Unconditional escalation via `matches: ".+"` on `submission_id`. No taint on
+  `amend_document` — the `never_after` permanent block is the correct and sole mechanism
+  here; a taint with no clearing tool would produce a misleading "call the taint-clearing
+  tool" error message. Regulatory anchor: 21 CFR Part 11 §11.10(e).
 
-- `policy-packs/healthcare-billing/hipaa-billing-guard.policy.yaml`
-  - Update the existing LunaBill pack with a `requires_prior_n` for multi-step
-    PHI access approval and explicit HIPAA citation in comments.
-
-For each: run `truebearing policy lint` in CI to verify zero errors.
+- **healthcare-billing**: new pack (not an update to existing `healthcare/hipaa-phi-guard`)
+  — adds `requires_prior_n` on `read_phi` requiring `verify_member_identity` (count: 1)
+  plus `only_after: [verify_member_identity, confirm_treatment_relationship]`. Explicit
+  HIPAA citations §164.502(b), §164.312(a)(1), §164.312(b), §164.308(a)(3) in comments.
 
 ---
 

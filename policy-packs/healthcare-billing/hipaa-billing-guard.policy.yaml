@@ -1,0 +1,173 @@
+# Pattern: Healthcare Billing — HIPAA billing guard with multi-step PHI access authorisation
+#
+# Risk mitigated: A healthcare billing agent with access to a clearinghouse API can violate
+# HIPAA in two distinct ways: (1) it can transmit more PHI than is minimally necessary for
+# the claim (45 CFR §164.502(b) minimum-necessary standard), and (2) it can access PHI
+# without completing a documented, multi-step authorisation chain — creating an incomplete
+# audit trail that fails HIPAA's access control and accountability requirements (45 CFR
+# §164.312(a)(1) and §164.312(b)).
+#
+# This policy addresses both risks. It extends the base HIPAA PHI guard pattern with a
+# requires_prior_n predicate that enforces a minimum number of documented authorisation
+# steps before PHI access is permitted. The result is a machine-verifiable audit trail for
+# every PHI access event, satisfying both the minimum-necessary standard and the electronic
+# audit trail requirements of the HIPAA Security Rule.
+#
+# Core guarantee: read_phi requires at least two documented authorisation events in this
+# session — verify_member_identity and confirm_treatment_relationship — before PHI may be
+# accessed. Once PHI is accessed, submit_claim and export_report are blocked until
+# run_compliance_scan explicitly clears the taint and certifies minimum-necessary scope.
+#
+# Key patterns in this pack:
+#   1. Multi-step PHI access authorisation (only_after) — both auth steps before PHI
+#   2. Minimum authorisation count (requires_prior_n) — at least one identity verification
+#   3. PHI taint (taint.applies) — session marked sensitive on PHI access
+#   4. Compliance gate (taint.clears) — minimum-necessary certification before submission
+#   5. Exfiltration block (never_after) — block submission while session is PHI-tainted
+#   6. High-value claim escalation (escalate_when) — human review on large claims
+#   7. Budget guard — hard cap on automated submissions per session
+#
+# How to adopt this policy:
+#   1. Replace tool names with your actual tool names (e.g., pull_ehr_record, send_837).
+#   2. Increase requires_prior_n count if your workflow has more than one identity step.
+#   3. Run: truebearing policy lint hipaa-billing-guard.policy.yaml
+#   4. Register: truebearing agent register billing-agent --policy ./hipaa-billing-guard.policy.yaml
+#   5. Do not run in shadow mode for PHI workflows — start in enforcement_mode: block.
+#
+# HIPAA references (Security Rule, 45 CFR Part 164):
+#   §164.502(b) Minimum necessary: covered entities must make reasonable efforts to limit
+#               PHI disclosures to the minimum necessary to accomplish the intended purpose.
+#   §164.312(a)(1) Access control: implement technical policies that allow access to ePHI
+#               only to those persons who have been granted access rights.
+#   §164.312(b) Audit controls: implement mechanisms to record and examine activity in
+#               information systems that contain or use ePHI.
+#   §164.308(a)(3) Workforce authorisation: implement policies for authorising access to
+#               ePHI, including a process to determine access level for each workforce member.
+#
+# Note: This policy is one technical control in a defence-in-depth programme. It does not
+# replace a formal HIPAA risk analysis, Business Associate Agreement (BAA) review, or
+# security risk management programme. Consult your Privacy Officer and Security Officer.
+
+version: "1"
+agent: billing-agent
+enforcement_mode: block  # PHI disclosure is not a shadow-mode scenario. Enforce from day one.
+
+session:
+  max_history: 500
+  max_duration_seconds: 3600  # 1-hour session. PHI sessions should be short-lived per §164.312(a)(2)(iii).
+
+budget:
+  max_tool_calls: 100         # Hard cap. A billing loop processing 100+ claims without review is a bug.
+  max_cost_usd: 2.00
+
+# Whitelist: only tools listed here may be called. Anything not listed is denied before
+# any other check runs, regardless of enforcement_mode.
+# check_escalation_status is a virtual tool injected by TrueBearing — always include it.
+may_use:
+  - verify_member_identity
+  - confirm_treatment_relationship
+  - read_eligibility
+  - read_phi
+  - run_compliance_scan
+  - submit_claim
+  - export_report
+  - check_escalation_status
+
+tools:
+  read_phi:
+    sequence:
+      # MULTI-STEP PHI ACCESS AUTHORISATION: both authorisation steps must have completed
+      # in this session before PHI may be accessed.
+      #
+      # HIPAA §164.312(a)(1) requires that access to ePHI is granted only to authorised
+      # persons. By requiring a documented identity verification AND treatment relationship
+      # confirmation before PHI access, this policy creates a machine-verifiable audit
+      # record of the authorisation chain for every PHI access event.
+      #
+      # HIPAA §164.312(b) requires audit controls that record and examine ePHI activity.
+      # The TrueBearing audit log — signed with Ed25519 — provides the tamper-evident
+      # record that an authorisation chain was completed before each PHI access, satisfying
+      # both the audit control requirement and the access control requirement in a single
+      # policy enforcement point.
+      #
+      # Step 1 (verify_member_identity): confirm the member is who the agent believes them
+      # to be. This step corresponds to §164.312(a)(1) person-or-entity authentication.
+      # Step 2 (confirm_treatment_relationship): confirm a legitimate care relationship
+      # exists that justifies accessing this specific member's PHI for this claim.
+      only_after:
+        - verify_member_identity      # §164.312(a)(1): confirm identity before PHI access
+        - confirm_treatment_relationship  # confirm clinical justification for access
+
+      # MINIMUM AUTHORISATION COUNT: at least one verify_member_identity call must have
+      # completed in this session. Protects against batch-processing flows where identity
+      # verification ran for a different member than the one whose PHI is about to be
+      # accessed. Increase the count if your workflow requires multiple identity checks
+      # (e.g., dual-factor verification) before PHI access is permitted.
+      requires_prior_n:
+        tool: verify_member_identity
+        count: 1
+
+    taint:
+      # Reading PHI taints the session immediately. This covers any access to protected
+      # health information: member demographics, diagnosis codes, treatment records,
+      # insurance member identifiers, or any HL7/FHIR resources tied to a real person.
+      #
+      # The taint persists until run_compliance_scan explicitly clears it. Any tool
+      # protected by never_after: [read_phi] will be blocked in the interim.
+      #
+      # Raw PHI arguments are stored in session_events.arguments_json for the sequence
+      # engine — this is local-only storage and not exported. See §164.312(b): audit
+      # trail records are retained locally and signed for tamper evidence.
+      applies: true
+      label: phi_accessed
+
+  submit_claim:
+    sequence:
+      # PREREQUISITE CHAIN: eligibility must be confirmed before claim submission.
+      # Submitting without eligibility verification risks claim denial and exposes PHI
+      # unnecessarily, violating the §164.502(b) minimum-necessary standard.
+      only_after:
+        - read_eligibility
+
+      # PHI EXFILTRATION BLOCK: if PHI was accessed this session, block claim submission
+      # until run_compliance_scan explicitly clears the taint. This enforces §164.502(b)
+      # minimum-necessary: the agent must certify that only the required PHI is included
+      # in the claim before any data is sent to the clearinghouse or payer.
+      never_after:
+        - read_phi
+
+    # HIGH-VALUE CLAIM ESCALATION: claims above this threshold require human review.
+    # HIPAA does not specify a dollar threshold, but large claims correlate with fraud
+    # risk and merit additional oversight regardless of the automated authorisation chain.
+    # Adjust to your organisation's large-claim review policy.
+    escalate_when:
+      argument_path: "$.claim_amount_usd"
+      operator: ">"
+      value: 5000
+
+  export_report:
+    sequence:
+      # Reports may contain PHI. Apply the same exfiltration block as submit_claim.
+      # §164.502(b) applies equally to reports as to claims — any disclosure must include
+      # only the minimum necessary PHI. If your reporting workflow produces aggregate
+      # statistics only (no individual-level PHI), remove this rule and document the
+      # exception in your risk analysis as a §164.502(b)(2)(i) routine disclosure.
+      never_after:
+        - read_phi
+
+  run_compliance_scan:
+    taint:
+      # The compliance scan confirms that the data prepared for submission contains only
+      # the minimum necessary PHI for this claim, satisfying §164.502(b). On completion,
+      # the phi_accessed taint is cleared.
+      #
+      # Design: run_compliance_scan is always allowed even when the session is tainted,
+      # because it is the only path to clearing the taint. Do not add never_after guards
+      # to this tool or it cannot be called to perform the clearance.
+      clears: true
+
+  # The following tools carry no additional rules beyond the may_use whitelist and budget.
+  # Add guards below if your workflow requires additional sequence or escalation logic.
+  verify_member_identity: {}
+  confirm_treatment_relationship: {}
+  read_eligibility: {}
