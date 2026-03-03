@@ -2436,27 +2436,20 @@ reason string. An LLM agent cannot parse that and retry correctly.
 
 ### Task 15.1 — Session inspect: Mermaid sequence diagram export
 **File:** `cmd/session/inspect.go`
-**Why:** A design partner who wants to show their compliance team, auditor, or investor
-what their agent actually did cannot hand them a JSONL file. A rendered Mermaid diagram
-pasted into Notion or a GitHub PR is immediately readable by non-engineers.
-Zero dependencies, ~2 hours of code, extremely high demo value.
+**Status:** Complete
+**Files:**
+- `cmd/session/inspect.go` — added `--format` flag, `writeMermaidOutput`, `detectTaintCausingEvents`, `mermaidDecisionLabel`
+- `cmd/session/inspect_test.go` — new file; 12 `TestWriteMermaidOutput` cases + 3 `TestDetectTaintCausingEvents` cases
+- `internal/store/escalations.go` — added `GetEscalationsBySession(sessionID string) ([]Escalation, error)`
 
-**What to build:**
-- Add `--format mermaid` flag to `truebearing session inspect <id>`.
-- Read the session event rows in order.
-- Output a valid Mermaid `sequenceDiagram` block:
-  ```
-  sequenceDiagram
-      Agent->>Proxy: read_external_email (ALLOWED)
-      Note over Proxy: session tainted
-      Agent->>Proxy: execute_wire_transfer (DENIED)
-      Note over Proxy: reason: taint_blocked
-  ```
-- Tainted steps get a `Note over` annotation showing the taint state change.
-- Denied steps show the `reason_code` from Task 14.3.
-- Escalated steps show `ESCALATED → APPROVED` or `ESCALATED → PENDING`.
-- Output to stdout so it can be piped to a file or pasted directly.
-- Add a test: a known session fixture should produce deterministic Mermaid output.
+**Notes:**
+- `--format` accepts `"table"` (default, existing behaviour) or `"mermaid"`. Unknown values produce a clear error.
+- Mermaid output uses the agent name as the Mermaid participant; spaces are replaced with underscores (Mermaid syntax requirement). Empty agent names fall back to `Agent`.
+- Taint annotation is inferred from the event log: when the first `deny` with `PolicyRule == "taint.session_tainted"` appears, the immediately preceding `allow` event is annotated with `Note over Proxy: session tainted`. This is a heuristic — it is accurate for the common case (taint-applying call immediately precedes the taint-sensitive blocked call) but may mis-annotate if several un-sensitive allowed calls intervened after the taint-applying call.
+- Escalation status is looked up via `GetEscalationsBySession` (new store method), keyed by `seq`, so the escalation table is read once per `inspect --format mermaid` invocation.
+- Denied events show `PolicyRule` as the reason code; empty `PolicyRule` falls back to `"policy_violation"`.
+- `shadow_deny` events display as `SHADOW DENIED` and also emit a reason-code annotation (same as `deny`).
+- No new Go module dependencies. Standard library only.
 
 ---
 

@@ -182,6 +182,51 @@ func (s *Store) resolveEscalation(id, status, note string) error {
 	return nil
 }
 
+// GetEscalationsBySession returns all escalation records for the given session,
+// ordered by seq ASC. This is used by the session inspect command to annotate
+// escalated events with their resolution status in the output (e.g. Mermaid diagrams).
+// Returns an empty slice (not nil) if the session has no escalations.
+func (s *Store) GetEscalationsBySession(sessionID string) ([]Escalation, error) {
+	const query = `
+		SELECT id, session_id, seq, tool_name, arguments_json, status, reason, created_at, resolved_at
+		FROM escalations
+		WHERE session_id = ?
+		ORDER BY seq ASC`
+
+	rows, err := s.db.Query(query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("querying escalations for session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	out := []Escalation{}
+	for rows.Next() {
+		var e Escalation
+		var argsJSON, reason *string
+		var resolvedAt *int64
+		if err := rows.Scan(
+			&e.ID, &e.SessionID, &e.Seq, &e.ToolName,
+			&argsJSON, &e.Status, &reason, &e.CreatedAt, &resolvedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scanning escalation row for session %q: %w", sessionID, err)
+		}
+		if argsJSON != nil {
+			e.ArgumentsJSON = *argsJSON
+		}
+		if reason != nil {
+			e.Reason = *reason
+		}
+		if resolvedAt != nil {
+			e.ResolvedAt = *resolvedAt
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating escalation rows for session %q: %w", sessionID, err)
+	}
+	return out, nil
+}
+
 // ListEscalations returns all escalation records, ordered by created_at DESC.
 // If status is non-empty it is used as an exact filter; pass "" to return all statuses.
 func (s *Store) ListEscalations(status string) ([]Escalation, error) {
