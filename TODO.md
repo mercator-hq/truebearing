@@ -2687,21 +2687,25 @@ in `cmd/audit/audit_test.go`. Both spread and burst cases are covered for both p
 
 ### Task 17.1 — `truebearing init`: add vertical-aware scaffolding
 **File:** `cmd/init.go`
-**Why:** Currently `truebearing init` generates a generic policy scaffold. A developer
-at Avallon AI should be offered an insurance-claims policy pack immediately, not a
-blank template. The five questions in init should branch based on vertical selection.
-
-**What to build:**
-- Add a "What best describes your agent?" question to the init flow with options:
-  `finance/payments`, `healthcare/HIPAA`, `legal/privileged-docs`,
-  `life-sciences/regulatory`, `devops/infra`, `other`.
-- Based on selection, copy the appropriate policy pack from `policy-packs/` as the
-  starting point instead of the blank template.
-- After generating the file, automatically run `truebearing policy lint` on it and
-  print the result. The generated file should lint clean — if it doesn't, that's a
-  bug in the policy pack.
-- Add a test: `init --vertical healthcare` should produce a file that lints with
-  zero errors.
+**Status:** Complete
+**Files:** `cmd/init.go`, `cmd/init_test.go`, `cmd/initpacks/packs.go`,
+  `cmd/initpacks/data/finance-payments.yaml`,
+  `cmd/initpacks/data/healthcare-hipaa.yaml`,
+  `cmd/initpacks/data/legal-privileged-docs.yaml`,
+  `cmd/initpacks/data/life-sciences-regulatory.yaml`,
+  `cmd/initpacks/data/devops-infra.yaml`
+**Notes:** Added Question 0 "What best describes your agent?" before the five-question
+  blank-template flow. Selecting a known vertical (finance, healthcare, legal,
+  life-sciences, devops) copies the embedded policy pack directly to the output path
+  and exits without further interactive questions. Selecting "other" (or pressing
+  Enter for the default) continues to the existing five-question flow unchanged.
+  A `--vertical <id>` flag skips the interactive question for CI and testing.
+  Policy packs are embedded at build time via `//go:embed` in the new `cmd/initpacks`
+  package; the data/ files are copies of the canonical templates in `policy-packs/`.
+  Changes to source packs must be propagated to `cmd/initpacks/data/` manually.
+  `TestInit_Vertical_LintClean` asserts zero lint ERRORs for every embedded vertical.
+  All existing tests updated to pass `vertical="other"` to skip the new Q0.
+  `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test ./...` all pass clean.
 
 ---
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mercator-hq/truebearing/cmd/initpacks"
 	intpolicy "github.com/mercator-hq/truebearing/internal/policy"
 )
 
@@ -139,6 +140,43 @@ func TestGeneratePolicyYAML(t *testing.T) {
 	}
 }
 
+// TestInit_Vertical_LintClean verifies that every embedded policy pack parses
+// and lints with zero ERRORs when selected via --vertical. This is the
+// acceptance gate for shipping a new pack: if it fails here, fix the pack first.
+func TestInit_Vertical_LintClean(t *testing.T) {
+	for _, vertical := range initpacks.KnownVerticals() {
+		vertical := vertical // capture for t.Parallel
+		t.Run(vertical, func(t *testing.T) {
+			dir := t.TempDir()
+			outPath := filepath.Join(dir, "out.policy.yaml")
+
+			var out bytes.Buffer
+			if err := runInit(&out, outPath, vertical); err != nil {
+				t.Fatalf("runInit --vertical %s: %v\nOutput:\n%s", vertical, err, out.String())
+			}
+
+			// The file must exist and parse cleanly.
+			p, err := intpolicy.ParseFile(outPath)
+			if err != nil {
+				t.Fatalf("ParseFile: %v", err)
+			}
+
+			// Zero lint ERRORs is the invariant for distributed policy packs.
+			results := intpolicy.Lint(p)
+			for _, r := range results {
+				if r.Severity == intpolicy.SeverityError {
+					t.Errorf("lint ERROR in %q pack: %s %s", vertical, r.Code, r.Message)
+				}
+			}
+
+			// The output must confirm the file was created.
+			if !strings.Contains(out.String(), "✓ Created") {
+				t.Errorf("output missing creation confirmation\nOutput:\n%s", out.String())
+			}
+		})
+	}
+}
+
 // TestRunInit_CircularDependency verifies that runInit aborts without writing
 // a file when the operator describes prerequisites that form a cycle (L013).
 func TestRunInit_CircularDependency(t *testing.T) {
@@ -204,7 +242,8 @@ func TestRunInit_EndToEnd(t *testing.T) {
 	w.Close()
 
 	var out bytes.Buffer
-	if err := runInit(&out, outPath); err != nil {
+	// Pass vertical="other" to skip the interactive vertical selection question.
+	if err := runInit(&out, outPath, "other"); err != nil {
 		t.Fatalf("runInit returned error: %v\nOutput:\n%s", err, out.String())
 	}
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mercator-hq/truebearing/cmd/initpacks"
 	intpolicy "github.com/mercator-hq/truebearing/internal/policy"
 )
 
@@ -24,36 +25,56 @@ const (
 	initAnsiCyan   = "\033[36m"
 )
 
+// verticalDescriptions maps a vertical identifier to the one-line description shown
+// in the interactive selection menu.
+var verticalDescriptions = map[string]string{
+	"finance":       "payment processing, invoicing, financial transactions",
+	"healthcare":    "PHI access, claims submission, patient records (HIPAA)",
+	"legal":         "document review, matter management, legal research",
+	"life-sciences": "FDA submissions, regulatory affairs, clinical trials",
+	"devops":        "CI/CD pipelines, production deployments, infrastructure",
+}
+
 // newInitCommand returns the `truebearing init` subcommand.
 //
 // This is the entry point for an engineer who has never written a TrueBearing
-// policy. Five questions are sufficient to produce a lint-clean, shadow-mode
-// policy file that the operator can review before enabling enforcement.
+// policy. A vertical selection routes to a pre-built policy pack; choosing
+// "other" asks five questions and produces a blank template instead.
 func newInitCommand() *cobra.Command {
 	var outputPath string
+	var vertical string
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Interactively scaffold a new TrueBearing policy file",
-		Long: `Generate a truebearing.policy.yaml from answers to five questions.
+		Long: `Generate a truebearing.policy.yaml from a pre-built policy pack or five questions.
 
-No prior knowledge of the policy DSL is required. The generated file uses
-enforcement_mode: shadow so no calls are blocked during the initial observation
-period. Change it to block once you have reviewed the audit logs.`,
+Choose your agent's vertical to receive a policy pack tailored to that domain.
+Choose "other" to answer five questions and build from a blank template.
+
+No prior knowledge of the policy DSL is required. Policy packs are pre-set to
+enforcement_mode: shadow (or block for PHI/regulatory use cases). Review the
+generated file and the inline comments before enabling full enforcement.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(cmd.OutOrStdout(), outputPath)
+			return runInit(cmd.OutOrStdout(), outputPath, vertical)
 		},
 	}
 
 	cmd.Flags().StringVarP(&outputPath, "output", "o", "truebearing.policy.yaml",
 		"path for the generated policy file")
+	cmd.Flags().StringVar(&vertical, "vertical", "",
+		"agent vertical: finance, healthcare, legal, life-sciences, devops, other (skips interactive question)")
 	return cmd
 }
 
 // runInit drives the interactive scaffolding session, validates all inputs,
-// generates the policy YAML, and writes it to outputPath.
-func runInit(out io.Writer, outputPath string) error {
+// generates or copies the appropriate policy YAML, and writes it to outputPath.
+//
+// vertical selects the policy pack to copy. Valid values are the identifiers
+// returned by initpacks.KnownVerticals() plus "other". An empty string triggers
+// an interactive vertical selection question before proceeding.
+func runInit(out io.Writer, outputPath, vertical string) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	// Warn if the output file already exists so the operator does not lose work.
@@ -67,6 +88,29 @@ func runInit(out io.Writer, outputPath string) error {
 
 	fmt.Fprintln(out, "TrueBearing Policy Scaffolder")
 	fmt.Fprintln(out, "─────────────────────────────")
+
+	// ── Question 0: Vertical selection ───────────────────────────────────────
+	// When --vertical is provided via flag, validate and skip the interactive
+	// prompt. "other" uses the blank template; any known vertical copies its pack.
+
+	if vertical == "" {
+		var err error
+		vertical, err = promptVertical(out, reader)
+		if err != nil {
+			return err
+		}
+	} else {
+		if !isKnownVertical(vertical) {
+			return fmt.Errorf("unknown --vertical %q; valid values: finance, healthcare, legal, life-sciences, devops, other", vertical)
+		}
+	}
+
+	// Policy-pack path: copy the matching pack and exit — no further questions.
+	if vertical != "other" {
+		return runInitFromPack(out, outputPath, vertical)
+	}
+
+	// Blank-template path: ask five questions and generate a policy from scratch.
 	fmt.Fprintln(out, "Answer five questions to generate a policy file.")
 	fmt.Fprintln(out, "Press Enter to accept the default shown in [brackets].")
 	fmt.Fprintln(out)
@@ -312,6 +356,114 @@ func generatePolicyYAML(
 	}
 
 	return b.String()
+}
+
+// isKnownVertical returns true when v is one of the accepted vertical identifiers,
+// including "other" for the blank-template path.
+func isKnownVertical(v string) bool {
+	if v == "other" {
+		return true
+	}
+	for _, k := range initpacks.KnownVerticals() {
+		if k == v {
+			return true
+		}
+	}
+	return false
+}
+
+// promptVertical displays the vertical selection menu, reads one line from
+// reader, and returns the corresponding vertical identifier.
+// The default selection is "other" (blank template).
+func promptVertical(out io.Writer, reader *bufio.Reader) (string, error) {
+	knownVerticals := initpacks.KnownVerticals()
+
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "0. What best describes your agent?")
+	for i, v := range knownVerticals {
+		fmt.Fprintf(out, "   %d. %-20s — %s\n", i+1, v, verticalDescriptions[v])
+	}
+	n := len(knownVerticals)
+	fmt.Fprintf(out, "   %d. other               — start from a blank template (answer five questions)\n", n+1)
+	fmt.Fprintln(out)
+
+	line, err := prompt(out, reader, fmt.Sprintf("Enter 1–%d", n+1), fmt.Sprintf("%d", n+1))
+	if err != nil {
+		return "", err
+	}
+	line = strings.TrimSpace(line)
+
+	// Empty input (user pressed Enter) → default is "other".
+	if line == "" || line == fmt.Sprintf("%d", n+1) {
+		return "other", nil
+	}
+
+	choice, err := strconv.Atoi(line)
+	if err != nil || choice < 1 || choice > n+1 {
+		return "", fmt.Errorf("invalid selection %q; enter a number between 1 and %d", line, n+1)
+	}
+	if choice == n+1 {
+		return "other", nil
+	}
+	return knownVerticals[choice-1], nil
+}
+
+// runInitFromPack copies the embedded policy pack for the given vertical to
+// outputPath, runs the linter, and prints the result. No interactive questions
+// are asked — the operator customises the generated file after init exits.
+func runInitFromPack(out io.Writer, outputPath, vertical string) error {
+	content, ok := initpacks.ByVertical(vertical)
+	if !ok {
+		// Should not happen: caller already validated via isKnownVertical.
+		return fmt.Errorf("no policy pack found for vertical %q", vertical)
+	}
+
+	parsed, err := intpolicy.ParseBytes(content, outputPath)
+	if err != nil {
+		// A parse error here is a bug in the embedded policy pack, not a user mistake.
+		return fmt.Errorf("embedded policy pack for %q is invalid (bug — please report): %w", vertical, err)
+	}
+
+	results := intpolicy.Lint(parsed)
+
+	// Count errors before writing. Any lint ERROR in an embedded pack is a
+	// ship-stopping bug: the pack must lint clean before it can be distributed.
+	errCount := 0
+	for _, r := range results {
+		if r.Severity == intpolicy.SeverityError {
+			errCount++
+		}
+	}
+	if errCount > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "The embedded %q policy pack has lint errors (bug — please report):\n", vertical)
+		fmt.Fprintln(out)
+		printInitLintResults(out, results)
+		return fmt.Errorf("embedded pack for %q has %d lint error(s); file not written", vertical, errCount)
+	}
+
+	if err := os.WriteFile(outputPath, content, 0644); err != nil {
+		return fmt.Errorf("writing policy file: %w", err)
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "✓ Created %s (from %s policy pack)\n", outputPath, vertical)
+
+	if len(results) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Lint results:")
+		printInitLintResults(out, results)
+	}
+
+	agentName := parsed.Agent
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Next steps:")
+	fmt.Fprintln(out, "  1. Edit the tool names in the generated file to match your actual MCP tools")
+	fmt.Fprintf(out, "  2. truebearing agent register %s --policy %s\n", agentName, outputPath)
+	fmt.Fprintf(out, "  3. truebearing serve --upstream <your-mcp-url> --policy %s\n", outputPath)
+	fmt.Fprintln(out, "  4. Run your agent and review: truebearing audit query --decision shadow_deny")
+
+	return nil
 }
 
 // prompt writes the question with its default value to out, reads a line from
