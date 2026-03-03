@@ -14,32 +14,31 @@
 class Truebearing < Formula
   desc "Transparent MCP proxy with sequence-aware behavioral policy enforcement"
   homepage "https://github.com/mercator-hq/truebearing"
-
-  # Update url and sha256 before each release.
-  # sha256 is computed over the archive: shasum -a 256 <archive>.tar.gz
-  url "https://github.com/mercator-hq/truebearing/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  version "0.1.0"
   license "Apache-2.0"
+
+  if OS.mac? && Hardware::CPU.arm?
+    url "https://github.com/mercator-hq/truebearing/releases/download/v0.1.0/truebearing-darwin-arm64"
+    sha256 "4b5198d1909b47ceb02beea9386ec465a741573cb4af153eb11ff3cf6f2ee4dd"
+  elsif OS.mac? && Hardware::CPU.intel?
+    url "https://github.com/mercator-hq/truebearing/releases/download/v0.1.0/truebearing-darwin-amd64"
+    sha256 "83fdcfe5d480e44af6592cd6f1460bdddb531a00f8bdb238b781744d85aaad33"
+  end
 
   # Install from HEAD with: brew install --HEAD mercator-hq/truebearing/truebearing
   head "https://github.com/mercator-hq/truebearing.git", branch: "master"
 
-  depends_on "go" => :build
-
   def install
-    # Design: CGO_ENABLED=0 is required. TrueBearing uses modernc.org/sqlite, a pure-Go
-    # SQLite implementation that needs no system libsqlite3. Disabling CGO produces a
-    # fully static binary with no runtime dependency on the host C library — this is the
-    # "single static binary" guarantee documented in the architecture.
-    ENV["CGO_ENABLED"] = "0"
-
-    system "go", "build",
-           *std_go_args(ldflags: "-s -w"),
-           "-o", bin/"truebearing",
-           "./cmd"
+    # The downloaded file is the raw binary, so we just need to install it to the
+    # bin directory and rename it to `truebearing`.
+    if OS.mac? && Hardware::CPU.arm?
+      bin.install "truebearing-darwin-arm64" => "truebearing"
+    elsif OS.mac? && Hardware::CPU.intel?
+      bin.install "truebearing-darwin-amd64" => "truebearing"
+    end
   end
 
   test do
-    assert_match "truebearing", shell_output("#{bin}/truebearing --help")
+    assert_match "truebearing version 0.1.0", shell_output("#{bin}/truebearing --version")
   end
 end
